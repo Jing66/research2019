@@ -10,7 +10,7 @@ def get_logger(fname=''):
     c_handler = logging.StreamHandler(sys.stderr)
 
     # Create formatters and add it to handlers
-    log_format = logging.Formatter('%(asctime)s,%(msecs)d %(levelname)-6s [%(filename)s:%(funcName)s] %(message)s',
+    log_format = logging.Formatter('%(asctime)s [%(filename)s:%(funcName)s] %(levelname)s:: %(message)s',
         datefmt='%Y-%m-%d:%H:%M:%S')
     c_handler.setFormatter(log_format)
 

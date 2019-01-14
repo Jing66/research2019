@@ -51,11 +51,9 @@ class Dataset():
         valid = np.argwhere((lens>lower) & (lens<upper)).ravel() # idx for valid doc
         valid_bound = np.cumsum(lens[valid]) # sentence boundary for valid docs
         valid_bound = np.concatenate((np.zeros(1),valid_bound)) # always has 0 at front
-        print('valid',valid.shape, valid[-5:])
-        print('sent_bound', self._sent_bound.shape, self._sent_bound[-5:])
         docs = [self.get_doc(i) for i in valid] # [doc1=[sent1,sent2...]]
-        print('filtered #docs', len(docs))
         sents = list(itertools.chain.from_iterable(docs)) 
+        # pdb.set_trace()
         return Dataset(sents,valid_bound,self._vocab)
 
 
@@ -69,8 +67,9 @@ class Dataset():
         bins[-1] = bins[-1]-1 if bins[-1]==len(self._sent_bound)-1 else bins[-1]
         slens = self._sent_bound[1:] - self._sent_bound[:-1]
         lsent = np.bincount(bins) 
-        nlens = _pad(lsent,len(slens)) # how many sentences less per doc
+        nlens = slens -  _pad(lsent,len(slens)) # how many sentences less per doc
         valid_bound = np.concatenate((np.zeros(1),np.cumsum(nlens)))
+        # pdb.set_trace()
         return Dataset(sents, valid_bound, self._vocab)
 
 
@@ -133,7 +132,7 @@ class Dataset():
         if idx > len(self._sent_bound-1):
             raise ValueError('doc #%d does not exist! '%idx)
         l,r = self._sent_bound[idx], self._sent_bound[idx+1]    
-        return self._sents[l:r]
+        return self._sents[int(l):int(r)]
 
     def plot_length(self,steps=50, fname='.'):
         slen = self._sent_bound[1:] - self._sent_bound[:-1]
@@ -213,7 +212,7 @@ if __name__=="__main__":
                         help='directory to store the processed files. detault: ./')
     parser.add_argument('-t','--test', dest='test', action='store_true',
                         help='run the test function')
-    parser.add_argument('-r','--read', dest='read', action='store_true',
+    parser.add_argument('-p','--process', dest='process', action='store_true',
                         help='save docs from input files')
     parser.add_argument('-l', '--log_fname', default='', 
                         help='generate logs in fname.log')
@@ -223,14 +222,16 @@ if __name__=="__main__":
     if args.test:
         __test(args)
     else:
-        if not args.read:
-            logger.info("Building datasets from ", args.input_files, "saving into ", args.out_dir)
+        if not args.process:
+            logger.info("Building datasets from "+str(args.input_files)+"; saving into" +str(args.out_dir))
             ds = Dataset.load_save_docs(args.input_files, args.out_dir)
         else:
+            logger.info('Loading and processing datasets from %s'%args.out_dir)
             ds = Dataset.load_ds(args.out_dir)
             logger.info(ds)
-            ds_filtered = ds.filter_docs(3,1000)
-            ds_filtered = ds_filtered.filter_sents(3,100)
+            ds_filtered = ds.filter_docs(3,500)
+            # pdb.set_trace()
+            # ds_filtered = ds.filter_sents(3,150)
             logger.info(ds_filtered)
             ds_filtered.save(args.out_dir+'_filtered')
             ds_filtered.plot_length(fname=args.out_dir+'_filtered')
