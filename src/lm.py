@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from graph import Graph
 
 
 class LM(nn.Module):
@@ -31,6 +32,8 @@ class LM(nn.Module):
         # decoder
         self.layers['decoder_rnn'] = nn.GRU(hidden_sz, hidden_sz,1, batch_first=True)
         self.layers['decoder_ff'] = nn.Linear(hidden_sz, self._V)
+        if self._hparams['tie_weights']:
+            self.layers['decoder_ff'].weight = self.layers['emb'].weights
         
 
     def forward(self, x, lens):
@@ -57,3 +60,4 @@ class LM(nn.Module):
         
         # decoder -- obj func
         dec = self.layers['decoder_rnn'](input_f,input_f)
+        out = self.layers['decoder_ff'](dec)

@@ -25,6 +25,21 @@ class Dataset():
         self._sents = sents
         self._sent_bound = sent_bound # indicates the boundary of sentences (within the same doc)
         self._vocab = vocab
+        self._vocab_sz = len(vocab)
+
+    @property
+    def vocab_sz(self):
+        return len(self._vocab)
+
+    @vocab_sz.getter
+    def vocab_sz(self):
+        return len(self._vocab)
+
+    def max_len(self, upper):
+        ''' return the length of longest sentence in dataset that is lower than upper'''
+        slens = np.array([len(s) for s in self._sents])
+        return min(upper, slens.max())
+
 
     def build(self, doc):
         '''build or aggregate dataset from doc'''        
@@ -41,7 +56,6 @@ class Dataset():
                 sent_in_idx.append(widx)
             self._sents.append(sent_in_idx)
         self._sent_bound.append(len(self._sents))
-
 
 
     def filter_docs(self, lower, upper):
