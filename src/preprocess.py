@@ -14,16 +14,23 @@ global logger
 PAD = 0
 EOS = 1
 UNK = 2
+UNK_THRES = 5       # if a word appears <UNK_THRES times, make it UNK
+RATIO = [7,2,1]     # ratio of train/dev/test split
+SENT_THRES = 5      # if a sentence has < SNET_THRES words, ignore it
 
 
-def _pad(arr, size):
-    return np.pad(arr, (0,size-arr.shape[0]), 'constant')
+def _pad_or_trunc(arr, size):
+    if arr.shape[0] < size:
+        return np.pad(arr, (0,size-arr.shape[0]), 'constant')
+    else:
+        return arr[:size]
 
 
 class Dataset():
-    def __init__(self, sents=[], sent_bound=[0],vocab={'PAD':PAD, 'EOS':EOS,'UNK':UNK}):
-        self._sents = sents
-        self._sent_bound = sent_bound # indicates the boundary of sentences (within the same doc)
+    def __init__(self, train=[], dev=[], test=[] ,vocab={'PAD':PAD, 'EOS':EOS,'UNK':UNK}):
+        self._train = train
+        self._test = test
+        self._dev = dev
         self._vocab = vocab
         self._vocab_sz = len(vocab)
 
@@ -37,56 +44,39 @@ class Dataset():
 
     def max_len(self, upper):
         ''' return the length of longest sentence in dataset that is lower than upper'''
-        slens = np.array([len(s) for s in self._sents])
+        slens = np.array([len(s) for s in self._train])
         return min(upper, slens.max())
 
+    def __len__(self):
+        return len(self._train)
 
-    def build(self, doc):
-        '''build or aggregate dataset from doc'''        
-        sents = sent_tokenize(doc)
-        if len(sents) == 0:
-            return
-        for sent in sents:
-            words = word_tokenize(sent)
-            sent_in_idx = []
-            for w in words:
-                if not w in self._vocab:
-                    self._vocab[w] = len(self._vocab)+1
-                widx = self._vocab[w]
-                sent_in_idx.append(widx)
-            self._sents.append(sent_in_idx)
-        self._sent_bound.append(len(self._sents))
+    #def filter_docs(self, lower, upper):
+    #    '''filter out docs with #sentence < lower or > upper, return new Dataset'''
+    #    logger.info('--filtering docs with length (#sentence) out of range (%s, %s)' %(lower,upper))
+    #    lens = self._sent_bound[1:] - self._sent_bound[:-1]
+    #    valid = np.argwhere((lens>lower) & (lens<upper)).ravel() # idx for valid doc
+    #    valid_bound = np.cumsum(lens[valid]) # sentence boundary for valid docs
+    #    valid_bound = np.concatenate((np.zeros(1),valid_bound)) # always has 0 at front
+    #    docs = [self.get_doc(i) for i in valid] # [doc1=[sent1,sent2...]]
+    #    sents = list(itertools.chain.from_iterable(docs)) 
+    #    # pdb.set_trace()
+    #    return Dataset(sents,valid_bound,self._vocab)
 
 
-
-
-    def filter_docs(self, lower, upper):
-        '''filter out docs with #sentence < lower or > upper, return new Dataset'''
-        logger.info('--filtering docs with length (#sentence) out of range (%s, %s)' %(lower,upper))
-        lens = self._sent_bound[1:] - self._sent_bound[:-1]
-        valid = np.argwhere((lens>lower) & (lens<upper)).ravel() # idx for valid doc
-        valid_bound = np.cumsum(lens[valid]) # sentence boundary for valid docs
-        valid_bound = np.concatenate((np.zeros(1),valid_bound)) # always has 0 at front
-        docs = [self.get_doc(i) for i in valid] # [doc1=[sent1,sent2...]]
-        sents = list(itertools.chain.from_iterable(docs)) 
-        # pdb.set_trace()
-        return Dataset(sents,valid_bound,self._vocab)
-
-
-    def filter_sents(self, lower, upper):
-        logger.info('--filtering sentences with length (#words) out of range (%s, %s)' %(lower,upper))
-        lens = np.array([len(s) for s in self._sents])
-        valid = np.argwhere((lens>lower) & (lens<upper)).ravel() # idx for valid sentences
-        invalid = np.argwhere((lens<=lower) | (lens>=upper)).ravel()
-        sents = [self._sents[i] for i in valid]
-        bins = np.digitize(invalid,self._sent_bound) - 1 
-        bins[-1] = bins[-1]-1 if bins[-1]==len(self._sent_bound)-1 else bins[-1]
-        slens = self._sent_bound[1:] - self._sent_bound[:-1]
-        lsent = np.bincount(bins) 
-        nlens = slens -  _pad(lsent,len(slens)) # how many sentences less per doc
-        valid_bound = np.concatenate((np.zeros(1),np.cumsum(nlens)))
-        # pdb.set_trace()
-        return Dataset(sents, valid_bound, self._vocab)
+    #def filter_sents(self, lower, upper):
+    #    logger.info('--filtering sentences with length (#words) out of range (%s, %s)' %(lower,upper))
+    #    lens = np.array([len(s) for s in self._sents])
+    #    valid = np.argwhere((lens>lower) & (lens<upper)).ravel() # idx for valid sentences
+    #    invalid = np.argwhere((lens<=lower) | (lens>=upper)).ravel()
+    #    sents = [self._sents[i] for i in valid]
+    #    bins = np.digitize(invalid,self._sent_bound) - 1 
+    #    bins[-1] = bins[-1]-1 if bins[-1]==len(self._sent_bound)-1 else bins[-1]
+    #    slens = self._sent_bound[1:] - self._sent_bound[:-1]
+    #    lsent = np.bincount(bins) 
+    #    nlens = slens -  _pad(lsent,len(slens)) # how many sentences less per doc
+    #    valid_bound = np.concatenate((np.zeros(1),np.cumsum(nlens)))
+    #    # pdb.set_trace()
+    #    return Dataset(sents, valid_bound, self._vocab)
 
 
 
@@ -96,48 +86,102 @@ class Dataset():
             files are 1 article per line
         '''
         ds = Dataset()
+        sents = []
         for fname in in_files:
             print("processing file: %s..."%fname)
             with open(fname,'r') as fp:
                 lines = fp.readlines()
-            for line in lines:
-                ds.build(line)
+            for doc in lines:
+                if len(doc)>0:
+                    sents.extend(sent_tokenize(doc))
+        self.build(sents)
         ds.save(out_dir)
         return ds
 
+    
+    def build(self,sents):
+        ''' sents: [sent1, sents2...]. each sentence has type str.'''
+        ratio = np.array(RATIO)
+        ratio/= np.sum(RATIO)
+        train_len = int(ratio[0]*len(sents))
+        dev_len = int(ratio[1]*len(sents))
+        
+        # train -- convert to idx and map to vocab
+        freq_dict = {}
+        for i in range(len(sents)):
+            if len(self._train) > train_len:
+                break
+            words = word_tokenize(sents[i])
+            if len(words) < SENT_THRES:
+                train_len -=1
+                continue                # sentence too short
+            sent_idx = []
+            for w in words:
+                if w not in self._vocab:
+                    self._vocab[w] = len(self._vocab)+1
+                sent_idx.append(self._vocab[w])
+                freq_dict[self._vocab[w]] = freq_dict.get(self._vocab[w],0)+1
+            sent_idx.append(EOS)
+            self._train.append(sent_idx)
+        # TODO: filter out infrequent words in vocab, remap vocab
+
+
+        # dev/test -- convert to idx
+        for j in range(i, len(sents)):
+            words = word_tokenize(sents[i])
+            if len(words) < SENT_THRES:
+                continue
+            sent_idx = []
+            for w in words:
+                sent_idx.append(self._vocab.get(w,UNK))
+                sent_idx.append(EOS)
+            if len(self._dev) < dev_len:
+                self._dev.append(sent_idx)
+            else:
+                self._test.append(sent_idx)
+
+
 
     def save(self, d):
-        ''' save vocab(dict), sentences(list), sentence_boundary'''      
+        ''' save vocab(dict), train/dev/test'''      
         if not os.path.exists(d):
             os.mkdir(d)
-        serialized = pickle.dumps(self._sents)
-        with open("%s/sents.pkl"%d,'wb') as file_object:
+        serialized = pickle.dumps(self._train_sents)
+        with open("%s/train.pkl"%d,'wb') as file_object:
+            file_object.write(serialized)
+        serialized = pickle.dumps(self._dev_sents)
+        with open("%s/dev.pkl"%d,'wb') as file_object:
+            file_object.write(serialized)
+        serialized = pickle.dumps(self._test_sents)
+        with open("%s/test.pkl"%d,'wb') as file_object:
             file_object.write(serialized)
         with open('%s/vocab.json'%d, "w") as f:
             json.dump(self._vocab,f)
-        np.save('%s/docs'%d, np.array(self._sent_bound))
 
     @classmethod
     def load_ds(cls, d):
-        with open("%s/sents.pkl"%d,'rb') as f:
+        with open("%s/train.pkl"%d,'rb') as f:
             serialized = f.read()
-        sents = pickle.loads(serialized)
+        train = pickle.loads(serialized)
+        with open("%s/test.pkl"%d,'rb') as f:
+            serialized = f.read()
+        test = pickle.loads(serialized)
+        with open("%s/dev.pkl"%d,'rb') as f:
+            serialized = f.read()
+        dev = pickle.loads(serialized)
         with open('%s/vocab.json'%d, "r") as read_file:
             vocab = json.load(read_file)
-        sent_bound = np.load('%s/docs.npy'%d)
-        return Dataset(sents, sent_bound, vocab)
+        return Dataset(train,dev,test, vocab)
 
     def __str__(self):
         '''print out information about this dataset'''
         s = '===== INFO of Dataset =====\n'
-        s += "dataset has %s documents,  %s sentences, %s vocabs"\
-                    %(len(self._sent_bound)-1, self._sent_bound[-1], len(self._vocab))
-        slen = np.array(self._sent_bound[1:]) - np.array(self._sent_bound[:-1])
-        s += '\nDocs length (#sentences): avg %s, median %s, max %s, min %s'\
-                        %(slen.mean(), np.median(slen), slen.max(), slen.min())
-        wlen = np.array([len(s) for s in self._sents])
-        s += '\nSentence length (#words): avg %s, median %s, max %s, min %s'\
-                        %(wlen.mean(), np.median(wlen), wlen.max(), wlen.min())
+        s += 'Dataset size (#sentences): train--%s, dev--%s, test--%s.'\
+                    %(len(self._train),len(self._dev),len(self.test)))
+        s += '\nVocab size: %s'%self.vocab_sz
+        tlens = np.array([len(s) for s in self._train])
+        s += '\nTraining sentence length info: max--%s, min--%s, mean--%s, median--%s'\
+                %(tlens.max(), tlens.min(), np.mean(tlens), np.median(tlens))
         return s
 
 
@@ -178,18 +222,23 @@ class Dataset():
         plt.savefig('%s/dist.png'%fname)
         plt.close()
 
-    def make_batch(self, bsize, shuffle=True, max_len=np.inf):
-        '''make a batch of sentences, doesn't need to be in the same doc'''
-        slen = self._sent_bound[1:] - self._sent_bound[:-1]
-        max_len = min(max_len, np.max(slen)) # T
-        sents = [s for s in self._sents if len(s)<max_len]
+
+
+
+    def make_batch(self, bsize, mode, shuffle=True, max_len=np.inf):
+        '''make a batch of sentences with length up to max_len. If too long, truncate
+            -- mode: str, "train"/"dev"/"test"
+        '''
+        sents = getattr(self,"_"+mode)
+        slens = [len(s) for s in sents]
+        max_len = min(max_len, np.max(slens))       # T can differ for each training batch?
         if shuffle:
             idx = np.random.permutation(len(sents))
         start = 0
         while start + bsize < len(sents):
             batch = [np.array(sents[i]) for i in idx[start: start+bsize]]
             start += bsize
-            padded = [_pad(b, max_len) for b in batch]
+            padded = [_pad_or_trunc(b, max_len) for b in batch]
             out = np.array(padded).reshape((bsize,-1))
             yield out
 

@@ -26,7 +26,7 @@ class Trainer():
     def train(self, savedir):
         self._logger.info('Constructing model from data [%s] with hparams:\n%s...' %(self._data, str(self._hparams['Model'])))
         dataset = Dataset.load_ds(self._data)
-        T = self._hparams['Model']['max_len'] # max length of input
+        T = self._hparams['Model']['max_len'] # upper bound of input length -- different batch can have different T
         self.g = Graph(dataset.max_len(T), self._hparams['Model'])
         self._model = LM(dataset.vocab_sz, self._hparams['Model'], self.g)
 
@@ -53,7 +53,7 @@ class Trainer():
         self._logger.info('Start training with best_loss %d, \nhparams:\n %s'%(best_loss, str(hparams['Trainer'])))
         for epoch in range(start_epoch, self._hparams['Trainer']['epoch']):
             self._logger.info('=> Train epoch %d'%epoch)
-            data_iter = dataset.make_batch(self._hparams['Trainer']['batch_sz'],T)
+            data_iter = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'train',T)
             losses = []
             for step, data in enumerate(data_iter):
                 if self._gpu:

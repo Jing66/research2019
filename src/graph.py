@@ -6,7 +6,7 @@ import torch.nn.functional as F
 class Graph(nn.Module):
     def __init__(self, max_len, hparams):
         super(Graph,self).__init__()
-        self._T = max_len
+        # self._T = max_len
         self._hparams = hparams
         self.layers = {}
         self.build()
@@ -25,8 +25,8 @@ class Graph(nn.Module):
             linear_k = nn.Linear(k_conv.out_channels, nb_lin_feat)
             linear_q = nn.Linear(q_conv.out_channels, nb_lin_feat)
 
-            b = nn.Parameters(torch.randn(self._T, self._T)) # bias term
-            
+            # b = nn.Parameters(torch.randn(self._T, self._T)) # bias term
+            b = nn.Parameters(torch.zeros(1))
             # collect layers
             self.layers['k_conv_%d'%l] = k_conv
             self.layers['q_conv_%d'%l] = q_conv
