@@ -58,6 +58,8 @@ class Dataset():
         self._sent_bound.append(len(self._sents))
 
 
+
+
     def filter_docs(self, lower, upper):
         '''filter out docs with #sentence < lower or > upper, return new Dataset'''
         logger.info('--filtering docs with length (#sentence) out of range (%s, %s)' %(lower,upper))

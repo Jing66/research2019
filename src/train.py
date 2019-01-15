@@ -26,17 +26,18 @@ class Trainer():
     def train(self, savedir):
         self._logger.info('Constructing model from data [%s] with hparams:\n%s...' %(self._data, str(self._hparams['Model'])))
         dataset = Dataset.load_ds(self._data)
-        T = self._hparams['Trainer']['max_len'] # max length of input
-        g = Graph(dataset.max_len(T), self._hparams['Model'])
-        self._model = LM(dataset.vocab_sz, self._hparams['Model'], g)
+        T = self._hparams['Model']['max_len'] # max length of input
+        self.g = Graph(dataset.max_len(T), self._hparams['Model'])
+        self._model = LM(dataset.vocab_sz, self._hparams['Model'], self.g)
 
         self._logger.info('Constructing optimizer...')
         criterion = nn.CrossEntropyLoss()
         self._opt = torch.optim.Adam(self._model.parameters(), hparams['Trainer']['lr'])
         params = [(name, p.shape) for name, p in self._model.named_parameters]
-        self._logger.info('Optimizing: %s'%str(params))
+        self._logger.info('Optimizing parameters: %s'%str(params))
         start_epoch = 0
         best_loss = np.inf
+        # if there's checkpoint
         if self._ckpt:
             logger.info('Loading checkpoint from %s...'%self._ckpt)
             checkpoint = torch.load(self._ckpt)
@@ -86,7 +87,11 @@ class Trainer():
         # save state of training, model, optimizer
         torch.save({'model':self._model.state_dict(),
             'optimizer':self._opt.state_dict(),
+            'graph': self.g.state_dict(),
             'epoch', epoch, 'loss':loss}, savedir)
+        # save the training/model hparams
+        with open('%s/config.json'%savedir,'w') as f:
+            json.dump(self._hparams, f, indent=4)
 
 
 
@@ -112,6 +117,10 @@ if __name__=="__main__":
 
     logger = get_logger(args.log_fname)
     hparams = json.load(open(args.config,'r'))
+    if self._ckpt:
+        logger.info('Overriding hparams from %s/config.json...'%self._ckpt)
+        hparams = json.load(open('%s/config.json'%savedir,'r'))
+
     if args.device:
         os.environ["CUDA_VISIBLE_DEVICES"] = args.device
 
