@@ -6,7 +6,7 @@ import torch.nn.functional as F
 class Graph(nn.Module):
     def __init__(self, max_len, hparams):
         super(Graph,self).__init__()
-        # self._T = max_len
+        # self._T = max_len         # FIXME: do we actually need this hparam?
         self._hparams = hparams
         self.layers = {}
         self.build()
@@ -26,17 +26,18 @@ class Graph(nn.Module):
             linear_q = nn.Linear(q_conv.out_channels, nb_lin_feat)
 
             # b = nn.Parameters(torch.randn(self._T, self._T)) # bias term
-            b = nn.Parameters(torch.zeros(1))
+            b = nn.Parameter(torch.zeros(1))
             # collect layers
             self.layers['k_conv_%d'%l] = k_conv
             self.layers['q_conv_%d'%l] = q_conv
             self.layers['linear_k_%d'%l] = linear_k
             self.layers['linear_q_%d'%l] = linear_q
-            self.layers['bias_%d'%l] = b
+            self.graph_bias = b
+            self.modules = nn.ModuleList(list(self.layers.values()))
 
 
 
-    def forward(self, x)
+    def forward(self, x):
         ''' 
              x: [x_1...x_T] input, shape (b, d, T)
              return: G, shape (b, L, T, T)
@@ -50,11 +51,11 @@ class Graph(nn.Module):
             # G_l_unnorm = (F.relu(torch.transpose(kl,1,2)@ql + bias))**2   # (b,T,T)
             kl = self.layers['linear_k_%d'%l](torch.transpose(ki,1,2))
             ql = self.layers['linear_q_%d'%l](torch.transpose(qi,1,2))      # (b,T,T)
-            bias = self.layers['bias_%d'%l]
+            bias = self.graph_bias
             # this computes: G_l[b,i,j] = [RELU(dot(kl[b,i,:],ql[b,j,:]+b)]^2
             G_l_unnorm = (F.relu(kl@torch.transpose(ql,1,2)+bias))**2       # (b,T,T)
             G_l = G_l_unnorm/torch.sum(G_l_unnorm, dim=1, keepdim=True)     #(b,T,T)
-            G.append(G_l)
+            G_.append(G_l)
         G = torch.stack(G_, dim=1) # (b,L,T,T)
         return G
 

@@ -2,11 +2,12 @@ import logging
 import sys
 
 
-def get_logger(fname=''):
+def get_logger(fname='', debug=True):
     '''create logger in fname.log. '''
     # Create a custom logger
     logger = logging.getLogger(__name__)
-    logger.setLevel(logging.DEBUG)
+    if debug:
+        logger.setLevel(logging.DEBUG)
     c_handler = logging.StreamHandler(sys.stderr)
 
     # Create formatters and add it to handlers
@@ -15,7 +16,7 @@ def get_logger(fname=''):
     c_handler.setFormatter(log_format)
 
     if len(fname)>0:
-        f_handler = logging.FileHandler('%s.log'%(fname))
+        f_handler = logging.FileHandler('%s.log'%(fname),mode='w')
         f_handler.setFormatter(log_format)
         logger.addHandler(f_handler)
 

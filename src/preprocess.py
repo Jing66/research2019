@@ -15,7 +15,7 @@ PAD = 0
 EOS = 1
 UNK = 2
 UNK_THRES = 5       # if a word appears <UNK_THRES times, make it UNK
-RATIO = [6,2,2]     # ratio of train/dev/test split
+RATIO = [7.5,1.5,1]     # ratio of train/dev/test split
 SENT_THRES = 5      # if a sentence has < SNET_THRES words, ignore it
 
 
@@ -123,7 +123,7 @@ class Dataset():
         for idx in range( train_len + dev_len):
             words = word_tokenize(sents[shuffled_idx[idx]])
             if len(words) < SENT_THRES:
-                train_len -=1
+                dev_len -=1
                 continue                # sentence too short
             for w in words:
                 word2freq[w] = word2freq.get(w,0)+1
@@ -200,13 +200,14 @@ class Dataset():
         s = '===== INFO of Dataset =====\n'
         s += 'Dataset size (#sentences): train--%s, dev--%s, test--%s.'\
                     %(len(self._train),len(self._dev),len(self._test))
-        s += '\nVocab size: %s'%self.vocab_sz
+        s += '\nVocab size obtained from training set: %s'%self.vocab_sz
         alllens = np.array([len(s) for s in self._train+self._test+self._dev])
         s += '\nDataset sentence length info: max--%s, min--%s, mean--%s, median--%s'\
                 %(alllens.max(), alllens.min(), np.mean(alllens), np.median(alllens))
         tlens = alllens[:len(self._train)]
         s += '\nTraining sentence length info: max--%s, min--%s, mean--%s, median--%s'\
                 %(tlens.max(), tlens.min(), np.mean(tlens), np.median(tlens))
+        s += '\n Training corpus #token :%d' %(np.sum(tlens))
         return s
 
 
@@ -247,7 +248,6 @@ class Dataset():
             # FIXME:T can differ for each training batch?
             T = np.array([len(b) for b in batch]).max()
             max_len = min(max_len, T)
-            print('max_len for current batch is %d'%max_len)
             padded = [_pad_or_trunc(b, max_len) for b in batch]
             out = np.array(padded).reshape((-1,max_len))
             yield out
