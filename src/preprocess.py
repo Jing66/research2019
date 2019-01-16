@@ -1,11 +1,11 @@
 from nltk.tokenize import sent_tokenize, word_tokenize
 import pickle
+import re
 import json
 import numpy as np
 import os
 import argparse
 import itertools
-from itertools import repeat
 import matplotlib.pyplot as plt
 
 from log_utils import get_logger
@@ -15,7 +15,7 @@ PAD = 0
 EOS = 1
 UNK = 2
 UNK_THRES = 5       # if a word appears <UNK_THRES times, make it UNK
-RATIO = [7,2,1]     # ratio of train/dev/test split
+RATIO = [6,2,2]     # ratio of train/dev/test split
 SENT_THRES = 5      # if a sentence has < SNET_THRES words, ignore it
 
 
@@ -24,6 +24,16 @@ def _pad_or_trunc(arr, size):
         return np.pad(arr, (0,size-arr.shape[0]), 'constant')
     else:
         return arr[:size]
+
+def normalize_str(s):
+    '''normalize string:
+        - convert to lower case
+        - replace digits with 5 (so `1` and `4` will be treated the same, but treated different from `12`
+    '''
+    s = s.lower()
+    s = re.sub(r'(\n)+','\n',s)
+    s = re.sub(r'[0-9]', '5',s)
+    return s
 
 
 class Dataset():
@@ -88,53 +98,65 @@ class Dataset():
         ds = Dataset()
         sents = []
         for fname in in_files:
-            print("processing file: %s..."%fname)
+            logger.info("adding sentences from: `%s`..."%fname)
             with open(fname,'r') as fp:
                 lines = fp.readlines()
             for doc in lines:
                 if len(doc)>0:
-                    sents.extend(sent_tokenize(doc))
-        self.build(sents)
+                    normed = normalize_str(doc)
+                    sents.extend(sent_tokenize(normed))
+        ds.build(sents)
         ds.save(out_dir)
         return ds
 
     
     def build(self,sents):
         ''' sents: [sent1, sents2...]. each sentence has type str.'''
-        ratio = np.array(RATIO)
-        ratio/= np.sum(RATIO)
+        ratio = np.array(RATIO).astype(np.float32)
+        ratio/= np.sum(ratio)
         train_len = int(ratio[0]*len(sents))
         dev_len = int(ratio[1]*len(sents))
-        
-        # train -- convert to idx and map to vocab
-        freq_dict = {}
-        for i in range(len(sents)):
-            if len(self._train) > train_len:
-                break
-            words = word_tokenize(sents[i])
+        # shuffle all sentences randomly before splitting into train/dev/test
+        shuffled_idx = np.random.permutation(len(sents))
+        word2freq = {}
+        vocab = self._vocab.copy()
+        for idx in range( train_len + dev_len):
+            words = word_tokenize(sents[shuffled_idx[idx]])
             if len(words) < SENT_THRES:
                 train_len -=1
                 continue                # sentence too short
+            for w in words:
+                word2freq[w] = word2freq.get(w,0)+1
+        # filter out infrequent words in vocab, remap vocab
+        for w, freq in word2freq.items():
+            if freq > UNK_THRES:
+                self._vocab[w] = len(self._vocab)+1
+
+        # train -- convert to idx and map to vocab
+        logger.info('Processing training set with new vocab')
+        for idx in range(len(sents)):
+            if len(self._train) > train_len:
+                break
+            words = word_tokenize(sents[shuffled_idx[idx]])
+            if len(words) < SENT_THRES:
+                continue                # sentence too short
             sent_idx = []
             for w in words:
-                if w not in self._vocab:
-                    self._vocab[w] = len(self._vocab)+1
-                sent_idx.append(self._vocab[w])
-                freq_dict[self._vocab[w]] = freq_dict.get(self._vocab[w],0)+1
+                sent_idx.append(self._vocab.get(w,UNK))
             sent_idx.append(EOS)
             self._train.append(sent_idx)
-        # TODO: filter out infrequent words in vocab, remap vocab
 
 
+        logger.info('Processing dev/test set...')
         # dev/test -- convert to idx
-        for j in range(i, len(sents)):
-            words = word_tokenize(sents[i])
+        for j in range(idx, len(sents)):
+            words = word_tokenize(sents[shuffled_idx[j]])
             if len(words) < SENT_THRES:
                 continue
             sent_idx = []
             for w in words:
                 sent_idx.append(self._vocab.get(w,UNK))
-                sent_idx.append(EOS)
+            sent_idx.append(EOS)
             if len(self._dev) < dev_len:
                 self._dev.append(sent_idx)
             else:
@@ -146,13 +168,13 @@ class Dataset():
         ''' save vocab(dict), train/dev/test'''      
         if not os.path.exists(d):
             os.mkdir(d)
-        serialized = pickle.dumps(self._train_sents)
+        serialized = pickle.dumps(self._train)
         with open("%s/train.pkl"%d,'wb') as file_object:
             file_object.write(serialized)
-        serialized = pickle.dumps(self._dev_sents)
+        serialized = pickle.dumps(self._dev)
         with open("%s/dev.pkl"%d,'wb') as file_object:
             file_object.write(serialized)
-        serialized = pickle.dumps(self._test_sents)
+        serialized = pickle.dumps(self._test)
         with open("%s/test.pkl"%d,'wb') as file_object:
             file_object.write(serialized)
         with open('%s/vocab.json'%d, "w") as f:
@@ -177,9 +199,12 @@ class Dataset():
         '''print out information about this dataset'''
         s = '===== INFO of Dataset =====\n'
         s += 'Dataset size (#sentences): train--%s, dev--%s, test--%s.'\
-                    %(len(self._train),len(self._dev),len(self.test)))
+                    %(len(self._train),len(self._dev),len(self._test))
         s += '\nVocab size: %s'%self.vocab_sz
-        tlens = np.array([len(s) for s in self._train])
+        alllens = np.array([len(s) for s in self._train+self._test+self._dev])
+        s += '\nDataset sentence length info: max--%s, min--%s, mean--%s, median--%s'\
+                %(alllens.max(), alllens.min(), np.mean(alllens), np.median(alllens))
+        tlens = alllens[:len(self._train)]
         s += '\nTraining sentence length info: max--%s, min--%s, mean--%s, median--%s'\
                 %(tlens.max(), tlens.min(), np.mean(tlens), np.median(tlens))
         return s
@@ -188,36 +213,18 @@ class Dataset():
     def __getitem__(self, index):
         return self._sents[index]
     
-    def get_doc(self, idx):
-        if idx > len(self._sent_bound-1):
-            raise ValueError('doc #%d does not exist! '%idx)
-        l,r = self._sent_bound[idx], self._sent_bound[idx+1]    
-        return self._sents[int(l):int(r)]
 
     def plot_length(self,steps=50, fname='.'):
-        slen = self._sent_bound[1:] - self._sent_bound[:-1]
-        T = slen.max()
-        x1 = np.linspace(0, T, num=steps, dtype=np.int64)
-        digits = np.digitize(slen,x1)
-        y1 = np.bincount(digits)
-
-        fig, axes = plt.subplots(nrows=2, ncols=1)
-        fig.tight_layout()
-
-        plt.subplot(2, 1, 1)
-        plt.hist(y1, x1)
-        plt.title('Distribution of document length')
-        plt.ylabel('# doc')
-
-        wlens = np.array([len(s) for s in self._sents])
+        all_sents = self._train + self._test + self._dev
+        wlens = np.array([len(s) for s in all_sents])
         S = wlens.max()
         x2 = np.linspace(0, S, num=steps, dtype=np.int64)
         digits2 = np.digitize(wlens,x2)
         y2 = np.bincount(digits2)
-        plt.subplot(2, 1, 2)
         plt.hist( y2,x2)
         plt.title('Distribution of sentence length')
-        plt.ylabel('# sentence')
+        plt.ylabel('# sentences')
+        plt.xlabel('# words (bins)')
 
         plt.savefig('%s/dist.png'%fname)
         plt.close()
@@ -226,20 +233,23 @@ class Dataset():
 
 
     def make_batch(self, bsize, mode, shuffle=True, max_len=np.inf):
-        '''make a batch of sentences with length up to max_len. If too long, truncate
+        '''make a batch of padded sentences with length up to max_len. If too long, truncate
             -- mode: str, "train"/"dev"/"test"
         '''
         sents = getattr(self,"_"+mode)
-        slens = [len(s) for s in sents]
-        max_len = min(max_len, np.max(slens))       # T can differ for each training batch?
+        # slens = [len(s) for s in sents]
         if shuffle:
             idx = np.random.permutation(len(sents))
         start = 0
-        while start + bsize < len(sents):
+        while start < len(sents):
             batch = [np.array(sents[i]) for i in idx[start: start+bsize]]
             start += bsize
+            # FIXME:T can differ for each training batch?
+            T = np.array([len(b) for b in batch]).max()
+            max_len = min(max_len, T)
+            print('max_len for current batch is %d'%max_len)
             padded = [_pad_or_trunc(b, max_len) for b in batch]
-            out = np.array(padded).reshape((bsize,-1))
+            out = np.array(padded).reshape((-1,max_len))
             yield out
 
 
@@ -249,23 +259,19 @@ class Dataset():
 def __test(args):
     logger.info("Testing with input_files" + str(args.input_files)+"out_dir:"+str(args.out_dir))
     in_files =args.input_files
-    # ds = Dataset.load_save_docs(in_files, args.out_dir)
+    ds = Dataset.load_save_docs(in_files, args.out_dir)
     logger.info("loading saved dataset")
     ds2 = Dataset.load_ds(args.out_dir)
     logger.info(ds2)
-    #dg = ds2.make_batch(500, max_len=100)
-    #while True:
-    #    try:
-    #        data = next(dg)
-    #        print('data', data[:2])
-    #    except StopIteration:
-    #        print("data set all consumed!")
-    #        break
-    ds3 = ds2.filter_docs(100,500)
-    print(ds3)
-    #ds4 = ds2.filter_sents(5,60)
-    #logger.info(ds4)
-    #ds4.plot_length(fname=args.out_dir)
+    dg = ds2.make_batch(200, 'test',max_len=100)
+    while True:
+        try:
+            data = next(dg)
+            print('data', data.shape, data[0], data[-1])
+        except StopIteration:
+            print("data set all consumed!")
+            break
+    ds2.plot_length(fname=args.out_dir)
 
 
 
@@ -288,15 +294,9 @@ if __name__=="__main__":
         __test(args)
     else:
         if not args.process:
-            logger.info("Building datasets from "+str(args.input_files)+"; saving into" +str(args.out_dir))
+            logger.info("Building datasets from "+str(args.input_files)+"; saving into " +str(args.out_dir))
             ds = Dataset.load_save_docs(args.input_files, args.out_dir)
         else:
             logger.info('Loading and processing datasets from %s'%args.out_dir)
             ds = Dataset.load_ds(args.out_dir)
             logger.info(ds)
-            ds_filtered = ds.filter_docs(3,500)
-            # pdb.set_trace()
-            # ds_filtered = ds.filter_sents(3,150)
-            logger.info(ds_filtered)
-            ds_filtered.save(args.out_dir+'_filtered')
-            ds_filtered.plot_length(fname=args.out_dir+'_filtered')

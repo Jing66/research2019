@@ -11,6 +11,29 @@ from log_utils import get_logger
 global logger
 
 
+class ContextLMLoss(nn.Module):
+
+    def __init__(self, context_sz):
+        super(ContextLMLoss, self).__init__()
+        self.D = context_sz
+        self.cxEtpLoss = nn.CrossEntropyLoss()
+    
+    
+    def forward(self, Xhat, X)
+        '''
+        loss function for language model training.
+            Xhat: [b, DxT,|V|]
+            X: [b,T]
+        loss = sum_t{CrossEntropy(Xhat[:,t*D:(t+1)*D,|V|], X[:,t+1:t+D+1]) for t=0...T-1
+        '''
+        T = X.shape[1]-1
+        D = self.D
+        losses = []
+        for t in range(T):
+            pred = Xhat[:,t*D:(t+1)*D,:]        # [b,D,|V|]
+            l = self.cxEtpLoss(torch.transpose(pred,1,2), X[:,t+1:t+D+1])
+            losses.append(l)
+        return sum(losses)
 
 
 class Trainer():
@@ -31,7 +54,7 @@ class Trainer():
         self._model = LM(dataset.vocab_sz, self._hparams['Model'], self.g)
 
         self._logger.info('Constructing optimizer...')
-        criterion = nn.CrossEntropyLoss()
+        criterion = ContextLMLoss(self._hparams['Model']['context_sz']
         self._opt = torch.optim.Adam(self._model.parameters(), hparams['Trainer']['lr'])
         params = [(name, p.shape) for name, p in self._model.named_parameters]
         self._logger.info('Optimizing parameters: %s'%str(params))
