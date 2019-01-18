@@ -300,3 +300,4 @@ if __name__=="__main__":
             logger.info('Loading and processing datasets from %s'%args.out_dir)
             ds = Dataset.load_ds(args.out_dir)
             logger.info(ds)
+            ds.plot_length(fname=args.out_dir)

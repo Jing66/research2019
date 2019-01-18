@@ -10,6 +10,7 @@ from preprocess import Dataset
 from lm import LM
 from graph import Graph
 
+import utils
 from log_utils import get_logger
 global logger
 
@@ -46,6 +47,7 @@ class Trainer():
         self._logger = _logger
         self._gpu = gpu
         self._ckpt = ckpt
+        self._logger.info("Device on %s"%self._gpu)
 
 
 
@@ -54,13 +56,13 @@ class Trainer():
                 %(self._data, json.dumps(self._hparams['Model'],indent=4)))
         dataset = Dataset.load_ds(self._data)
         T = self._hparams['Model']['max_len'] # upper bound of input length -- different batch can have different T
-        self.g = Graph(dataset.max_len(T), self._hparams['Model'])
-        self._model = LM(dataset.vocab_sz, self._hparams['Model'], self.g)
+        self.g = Graph(dataset.max_len(T), self._hparams['Model'], self._logger)
+        self._model = LM(dataset.vocab_sz, self._hparams['Model'], self.g, self._logger)
         self._logger.info('Constructing optimizer...')
         criterion = ContextLMLoss(self._hparams['Model']['context_sz'])
         self._opt = torch.optim.Adam(self._model.parameters(), hparams['Trainer']['lr'])
         params = [(name, p.shape) for name, p in self._model.named_parameters()]
-        self._logger.info('Optimizing parameters: %s'%str(params))
+        self._logger.debug('Optimizing parameters: %s'%str(params))
         start_epoch = 0
         best_loss = np.inf
         # if there's checkpoint
@@ -73,7 +75,8 @@ class Trainer():
             self._opt.load_state_dict(checkpoint['optimizer'])
 
         if self._gpu:
-            model.cuda(self._gpu)
+            self.g.cuda(self._gpu)
+            self._model.cuda(self._gpu)
             criterion.cuda(self._gpu)
 
         self._logger.info('Start training with best_loss %6.4f, \nhparams:\n %s'%(best_loss, json.dumps(hparams['Trainer'], indent=4)))
@@ -82,9 +85,10 @@ class Trainer():
             data_iter = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'train',T)
             losses = []
             for step, data in enumerate(data_iter):
+                d = torch.from_numpy(data)
                 if self._gpu:
-                    data = data.cuda(self._gpu)
-                X= torch.autograd.Variable(torch.from_numpy(data), requires_grad=False)
+                    d.cuda(self._gpu)
+                X= torch.autograd.Variable(d, requires_grad=False)
                 y_pred = self._model(X)         # X:[b,T], y_pred:[b,T, |V|]
                 loss = criterion(y_pred, X)
                 self._logger.debug('loss per batch = %f'%loss)
@@ -96,7 +100,20 @@ class Trainer():
                 self._opt.step()
 
             loss_per_epoch = np.array(losses).mean()
-            self._logger.info('epoch %d done, loss=%6.4f'%(epoch, loss_per_epoch))
+            self._logger.info('epoch %d done, training loss=%6.4f'%(epoch, loss_per_epoch))
+
+            # evaluate every epoch
+            losses = []
+            data_iter_eval = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'dev',T)
+            for step, data in enumerate(data_iter_eval):
+                d = torch.from_numpy(data)
+                X= torch.autograd.Variable(d, requires_grad=False)
+                y_pred = self._model(X)
+                loss = criterion(y_pred, X)
+                losses.append(loss.item())
+            loss_per_epoch = np.array(losses).mean()
+            self._logger.info('eval on epoch %d done, dev loss=%6.4f'%(epoch, loss_per_epoch))
+            # save best model on dev set
             if loss_per_epoch < best_loss:
                 best_loss = loss_per_epoch
                 self.save(savedir, best_loss, epoch)
@@ -135,19 +152,23 @@ if __name__=="__main__":
                         help='generate logs in fname.log')
     parser.add_argument('-s', '--save_dir', default='experiment/expr001', 
                         help='path to save trained model')
-    parser.add_argument('-D', '--device', default=None, type=str,
-                        help='indices of GPUs to enable (default: all)')
-    
-    args = parser.parse_args()
+    parser.add_argument('--cpu', dest='cpu', default=False, action='store_true')
+    parser.add_argument('--debug', dest='debug', default=False, action='store_true')
 
-    logger = get_logger(args.log_fname)
+    args = parser.parse_args()
+    args.device=None
+
+    logger = get_logger(args.log_fname, args.debug)
+    free_gpu, free_mem  = utils.get_free_gpu()
+    if free_mem > 1000 and not args.cpu:
+        os.environ["CUDA_VISIBLE_DEVICES"] = str(free_gpu)
+        # torch.cuda.set_device(free_gpu)
+        args.device=torch.device('cuda:0')
+
     hparams = json.load(open(args.config,'r'))
     if args.resume:
         logger.info('Overriding hparams from %s/config.json...'%self._ckpt)
         hparams = json.load(open('%s/config.json'%savedir,'r'))
-
-    if args.device:
-        os.environ["CUDA_VISIBLE_DEVICES"] = args.device
 
     trainer = Trainer( hparams,args.data_dir,args.resume, logger, args.device)
     trainer.train(args.save_dir) 

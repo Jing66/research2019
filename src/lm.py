@@ -5,9 +5,10 @@ import layers
 
 
 class LM(nn.Module):
-    def __init__(self, vocab_sz, hparams, graph_predictor, embd_weights=None):
+    def __init__(self, vocab_sz, hparams, graph_predictor, logger, embd_weights=None):
         super(LM, self).__init__()
         self._hparams = hparams
+        self.logger = logger
         self._V = vocab_sz
         self.G = graph_predictor
         self.layers = {}
@@ -70,7 +71,7 @@ class LM(nn.Module):
             # Check: wgt_inputs[b,t,:] = sum_j{G[b,j,t])*f[b,j,:]}
             wgt_inputs = torch.transpose(G_l,1,2)@input_f           #(b,T,hidden)
             # if we use GRUCell, need to flatten inputs to [bxT, hidden] first...Linear layers does the flatten/unflatten for us
-            # print('l',l,'shape', wgt_inputs.shape,input_f.shape)
+            self.logger.debug('l=%d, wgt_inputs.shape=%s, input_f.shape=%s' %(l, str(wgt_inputs.shape),str(input_f.shape)))
             if self._hparams['compose_fn']=='GRUCell':
                 wgt_inputs = wgt_inputs.view(-1,wgt_inputs.shape[-1])
                 input_f = input_f.view(-1,input_f.shape[-1])

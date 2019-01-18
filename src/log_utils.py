@@ -8,6 +8,8 @@ def get_logger(fname='', debug=True):
     logger = logging.getLogger(__name__)
     if debug:
         logger.setLevel(logging.DEBUG)
+    else:
+        logger.setLevel(logging.INFO)
     c_handler = logging.StreamHandler(sys.stderr)
 
     # Create formatters and add it to handlers

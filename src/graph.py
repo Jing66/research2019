@@ -4,12 +4,13 @@ import torch.nn.functional as F
 
 
 class Graph(nn.Module):
-    def __init__(self, max_len, hparams):
+    def __init__(self, max_len, hparams, logger=None):
         super(Graph,self).__init__()
         # self._T = max_len         # FIXME: do we actually need this hparam?
         self._hparams = hparams
         self.layers = {}
         self.build()
+        self.logger = logger
 
 
     def build(self):
