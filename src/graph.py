@@ -15,14 +15,14 @@ class Graph(nn.Module):
 
 
     def build(self):
-        for l in range(self._hparams['L']):
+        for l in range(self._hparams['n_layers']):
             # key and query CNN
-            kernel_sz = self._hparams['kernel_sz'] # must be odd
+            kernel_sz = self._hparams['Graph']['kernel_sz'] # must be odd
             padding = int(0.5*kernel_sz) # s.t. conv output has dim T
             self.logger.debug('kernel_size=%d, padding=%d'%(kernel_sz, padding))
-            nb_filter_k = self._hparams['n_filter_k']
-            nb_filter_q = self._hparams['n_filter_q']
-            nb_lin_feat = self._hparams['linear_feat']
+            nb_filter_k = self._hparams['Graph']['n_filter_k']
+            nb_filter_q = self._hparams['Graph']['n_filter_q']
+            nb_lin_feat = self._hparams['Graph']['linear_feat']
             k_conv = nn.Conv1d(in_channels=self._hparams['embd_sz'], out_channels=nb_filter_k, kernel_size=kernel_sz, padding=padding)
             q_conv = nn.Conv1d(in_channels=self._hparams['embd_sz'], out_channels=nb_filter_q, kernel_size=kernel_sz, padding=padding)
             linear_k = nn.Linear(k_conv.out_channels, nb_lin_feat)
@@ -46,7 +46,7 @@ class Graph(nn.Module):
              return: G, shape (b, L, T, T)
         '''
         G_ = []
-        for l in range(self._hparams['L']):
+        for l in range(self._hparams['n_layers']):
             # pdb.set_trace()
             ki = self.layers['k_conv_%d'%l](x)
             qi = self.layers['q_conv_%d'%l](x) # (b, n_filters, T)
@@ -57,7 +57,8 @@ class Graph(nn.Module):
             ql = self.layers['linear_q_%d'%l](torch.transpose(qi,1,2))      # (b,T,n_linear_feat)
             bias = self.graph_bias
             # this computes: G_l[b,i,j] = [RELU(dot(kl[b,i,:],ql[b,j,:]+b)]^2
-            G_l_unnorm = (F.relu(kl@torch.transpose(ql,1,2)+bias))**2       # (b,T,T)
+            sparse_fn = getattr(F, self._hparams['Graph']['sparsity_fn'])
+            G_l_unnorm = (sparse_fn(kl@torch.transpose(ql,1,2)+bias))**2       # (b,T,T)
             Z = torch.sum(G_l_unnorm, dim=1, keepdim=True)                  #(b,T,T)
             G_l = G_l_unnorm/(Z+EPSILON)                    # Z might be zero since RELU sets  all neg. values to 0
             G_.append(G_l)

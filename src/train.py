@@ -59,7 +59,7 @@ class Trainer():
         T = self._hparams['Model']['max_len'] # upper bound of input length -- different batch can have different T
         self.g = Graph( self._hparams['Model'], self._logger)
         self._model = LM(dataset.vocab_sz, self._hparams['Model'], self.g, self._logger)
-        criterion = ContextLMLoss(self._hparams['Model']['context_sz'])
+        criterion = ContextLMLoss(self._hparams['Model']['Feature']['context_sz'])
         self._logger.info('Constructing optimizer: %s' %self._hparams['Trainer']['optimizer'])
         optimizer = getattr(torch.optim, self._hparams['Trainer']['optimizer'])
         self._opt = optimizer(self._model.parameters(),self._hparams['Trainer']['lr'])
