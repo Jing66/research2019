@@ -8,7 +8,7 @@ import argparse
 import itertools
 import matplotlib.pyplot as plt
 
-from log_utils import get_logger
+from log_utils import  get_logger
 global logger
 
 PAD = 0
@@ -130,7 +130,7 @@ class Dataset():
         # filter out infrequent words in vocab, remap vocab
         for w, freq in word2freq.items():
             if freq > UNK_THRES:
-                self._vocab[w] = len(self._vocab)+1
+                self._vocab[w] = len(self._vocab)
 
         # train -- convert to idx and map to vocab
         logger.info('Processing training set with new vocab')
@@ -296,6 +296,7 @@ if __name__=="__main__":
         if not args.process:
             logger.info("Building datasets from "+str(args.input_files)+"; saving into " +str(args.out_dir))
             ds = Dataset.load_save_docs(args.input_files, args.out_dir)
+            print(ds)
         else:
             logger.info('Loading and processing datasets from %s'%args.out_dir)
             ds = Dataset.load_ds(args.out_dir)

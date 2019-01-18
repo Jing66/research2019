@@ -9,7 +9,6 @@ class ResLinear(nn.Module):
         self.nb_in = nb_in
         self.nb_out = nb_out
         self.linear = nn.Linear(nb_in, nb_out)
-        self.linear_res = nn.Linear(nb_in, nb_out)
 
 
     def forward(self, wgt_inputs, inputs):
@@ -19,6 +18,5 @@ class ResLinear(nn.Module):
             return: [*,nb_out]
         '''
         xhat = self.linear(wgt_inputs)
-        xres = self.linear(inputs)
-        out = xhat + xres
+        out = xhat + inputs
         return out

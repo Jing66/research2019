@@ -1,16 +1,17 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+# import pdb
+EPSILON = 1e-4
 
 
 class Graph(nn.Module):
-    def __init__(self, max_len, hparams, logger=None):
+    def __init__(self, hparams, logger=None):
         super(Graph,self).__init__()
-        # self._T = max_len         # FIXME: do we actually need this hparam?
         self._hparams = hparams
         self.layers = {}
-        self.build()
         self.logger = logger
+        self.build()
 
 
     def build(self):
@@ -18,11 +19,12 @@ class Graph(nn.Module):
             # key and query CNN
             kernel_sz = self._hparams['kernel_sz'] # must be odd
             padding = int(0.5*kernel_sz) # s.t. conv output has dim T
+            self.logger.debug('kernel_size=%d, padding=%d'%(kernel_sz, padding))
             nb_filter_k = self._hparams['n_filter_k']
             nb_filter_q = self._hparams['n_filter_q']
             nb_lin_feat = self._hparams['linear_feat']
-            k_conv = nn.Conv1d(in_channels=1, out_channels=nb_filter_k, kernel_size=kernel_sz, padding=padding)
-            q_conv = nn.Conv1d(in_channels=1, out_channels=nb_filter_q, kernel_size=kernel_sz, padding=padding)
+            k_conv = nn.Conv1d(in_channels=self._hparams['embd_sz'], out_channels=nb_filter_k, kernel_size=kernel_sz, padding=padding)
+            q_conv = nn.Conv1d(in_channels=self._hparams['embd_sz'], out_channels=nb_filter_q, kernel_size=kernel_sz, padding=padding)
             linear_k = nn.Linear(k_conv.out_channels, nb_lin_feat)
             linear_q = nn.Linear(q_conv.out_channels, nb_lin_feat)
 
@@ -45,17 +47,19 @@ class Graph(nn.Module):
         '''
         G_ = []
         for l in range(self._hparams['L']):
+            # pdb.set_trace()
             ki = self.layers['k_conv_%d'%l](x)
-            qi = self.layers['q_conv_%d'%l](x) # (b, out_channel,T)
+            qi = self.layers['q_conv_%d'%l](x) # (b, n_filters, T)
             # kl = self.layers['linear_k_%d'%l](ki)
             # ql = self.layers['linear_q_%d'%l](qi) #(b,d,T)
             # G_l_unnorm = (F.relu(torch.transpose(kl,1,2)@ql + bias))**2   # (b,T,T)
             kl = self.layers['linear_k_%d'%l](torch.transpose(ki,1,2))
-            ql = self.layers['linear_q_%d'%l](torch.transpose(qi,1,2))      # (b,T,T)
+            ql = self.layers['linear_q_%d'%l](torch.transpose(qi,1,2))      # (b,T,n_linear_feat)
             bias = self.graph_bias
             # this computes: G_l[b,i,j] = [RELU(dot(kl[b,i,:],ql[b,j,:]+b)]^2
             G_l_unnorm = (F.relu(kl@torch.transpose(ql,1,2)+bias))**2       # (b,T,T)
-            G_l = G_l_unnorm/torch.sum(G_l_unnorm, dim=1, keepdim=True)     #(b,T,T)
+            Z = torch.sum(G_l_unnorm, dim=1, keepdim=True)                  #(b,T,T)
+            G_l = G_l_unnorm/(Z+EPSILON)                    # Z might be zero since RELU sets  all neg. values to 0
             G_.append(G_l)
         G = torch.stack(G_, dim=1) # (b,L,T,T)
         return G
