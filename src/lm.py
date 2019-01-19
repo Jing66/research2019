@@ -88,8 +88,12 @@ class LM(nn.Module):
                 xhat_t_d = self.layers['decoder_ff'](h)         # output logits, [b,|V|]
                 xhat_t.append(xhat_t_d)
                 _, idx = xhat_t_d.max(-1)   # input to decoder at (d+1) step299  (b,)
-                # TODO: scheduled-sampling: with prob 0.5, use ground truth as next input
-                next_in = self.drop(self.layers['emb'](idx))     #[b,1,embd_sz]
+                # scheduled-sampling
+                p_ss = self._hparams['Feature']['SS_prob']      # with prob p_ss, use the predicted word as input
+                if torch.randn(1)[0].item() > p_ss:
+                    next_in = embedded[:,t+d,:]
+                else:
+                    next_in = self.drop(self.layers['emb'](idx))     #[b,1,embd_sz]
             xhat = torch.stack(xhat_t,dim=1)    # [b,D,|V|]
             out.append(xhat)
 
