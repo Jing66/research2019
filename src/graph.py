@@ -67,3 +67,16 @@ class Graph(nn.Module):
         
         
 
+    def freeze(self):
+        """Freeze graph network, used in downstreaming tasks"""
+        for param in self.parameters():
+            param.requires_grad = False
+
+
+    def prop_connection(self, x, mask):
+        '''propagate the connections among multiple layers
+            return lambda: shape [b,L,T,T], lambda[:,l,:,:] = G[:,0,:,:]*...*G[:,l,:,:]
+        '''
+        G = self.forward(x, mask)           # [b,L,T,T]
+        out = torch.cumprod(G, dim=1)       # [b,L,T,T]
+        return out
