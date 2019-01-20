@@ -27,7 +27,6 @@ class LM(nn.Module):
     def build(self, cutoffs):
         '''Construct all layers
             cutoffs -- boundary for clusters in adaptive softmax'''
-        pdb.set_trace()
         self.drop = nn.Dropout(self._hparams['dropout'])
         emb_sz = self._hparams['embd_sz']
         hidden_sz = emb_sz          # in message-passing, embedding size must equal GRU hidden size
@@ -35,7 +34,7 @@ class LM(nn.Module):
         self.layers['emb'] = nn.Embedding(self._V, emb_sz, sparse=True, padding_idx=PAD)
         cellClass = nn.GRUCell if self._hparams['Feature']['compose_fn']=='GRUCell' else layers.ResLinear
         for l in range(1,self._hparams['n_layers']+1):
-                cell = cellClass(hidden_sz, hidden_sz)
+            cell = cellClass(hidden_sz, hidden_sz)
             self.layers['encoder_%d'%l] = cell
 
         # decoder
@@ -91,7 +90,7 @@ class LM(nn.Module):
             if self._hparams['Feature']['compose_fn']=='GRUCell':
                 input_f = input_f.view(b,T,-1)
 
-        # decoder -- input_f: [b,T,hidden]
+        # ----------------------- decoder -- input_f: [b,T,hidden] -----------------
         logprobs = []
         next_in = embedded[torch.arange(b),lengths-1,:]      # input to decoder at t0: <EOS>
         n_padding= 0
@@ -101,32 +100,36 @@ class LM(nn.Module):
         def _select_by_length( timestep, lens):
             '''select only non-padding batch into RNN. return number of samples excluded
             '''
-            #zeros = torch.zeros(lens.shape).type(torch.LongTensor)
-            #if is_cuda:
-            #    zeros = zeros.cuda()
-            #select = torch.where( lens>timestep, zeros, lens)
-            #n_padding = torch.sum((select!=0))
             n_padding = torch.sum(lens<=timestep)
             return n_padding
 
         for t in range(T-D+1):
             h0_t = input_f[:,t,: ]                # init h0 of decoder at t: f_t (b,hidden_sz)
-            next_hidden = h0_t
 
-            # pdb.set_trace()
-            # CASE teacher forcing, use packed_padded_seq to speed up
+            # ------ CASE teacher forcing, use packed_padded_seq to speed up
             if p_ss == 0.0:
+                # pdb.set_trace()
                 if t>0:
                     inputs = embedded[:, t-1:t-1+D,: ]   # inputs: [b,D,hidden]
                 else:
                     inputs = torch.cat((torch.unsqueeze(next_in,1), embedded[:,:D-1,: ]),1)
-                packed_input = nn.utils.rnn.pack_padded_sequence(inputs, lengths, batch_first=True)
+                n_padding = _select_by_length(t,lengths)
+                inputs, h0_t = inputs[:(b-n_padding)], h0_t[:(b-n_padding)]
+                _tmp = torch.tensor([D]).type(torch.LongTensor)
+                if is_cuda:
+                    _tmp = _tmp.cuda()
+                lens = torch.min(lengths[:(b-n_padding)]-t, _tmp.expand(inputs.shape[0]))
+                # pdb.set_trace()
+                packed_input = nn.utils.rnn.pack_padded_sequence(inputs, lens, batch_first=True)
                 packed_output, _ = self.layers['decoder_rnn'](packed_input, torch.unsqueeze(h0_t,0).contiguous())      
                 output, _ = nn.utils.rnn.pad_packed_sequence(packed_output)     # [b,D,hidden]
-                logprob = self.layers['decoder_remap'](output.view(b*D, -1)).view(b,D,-1)          #[b,D, |V|]
+                output = output.transpose(0,1).contiguous()
+                logprob = self.layers['decoder_remap'].log_prob(output.view((b-n_padding)*D, -1)).view((b-n_padding),D,-1)          #[b,D, |V|]
+                logprob = F.pad(logprob, (0,0,0,0,0,n_padding))
 
-            # CASE use scheduled sampling
+            # ----- CASE use scheduled sampling
             else:
+                next_hidden = h0_t
                 if t>0:
                     next_ = embedded[:,t-1,:]     # input to decoder at t: x_{t-1}
                     n_padding = _select_by_length(t, lengths)       # next_in: [b_, embd_sz]

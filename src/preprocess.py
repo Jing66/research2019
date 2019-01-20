@@ -192,7 +192,6 @@ class Dataset():
             c = np.argwhere(cum_appr > cum_cut[i]).min()
             
             cutoff.append(c+3)          # offset for pad/unk/eos
-        pdb.set_trace()
         return cutoff
 
 
