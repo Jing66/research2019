@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-# import pdb
+import pdb
 EPSILON = 1e-4
 
 
@@ -40,9 +40,10 @@ class Graph(nn.Module):
 
 
 
-    def forward(self, x):
+    def forward(self, x, mask):
         ''' 
              x: [x_1...x_T] input, shape (b, d, T)
+             mask: shape (b,T,T)
              return: G, shape (b, L, T, T)
         '''
         G_ = []
@@ -50,17 +51,15 @@ class Graph(nn.Module):
             # pdb.set_trace()
             ki = self.layers['k_conv_%d'%l](x)
             qi = self.layers['q_conv_%d'%l](x) # (b, n_filters, T)
-            # kl = self.layers['linear_k_%d'%l](ki)
-            # ql = self.layers['linear_q_%d'%l](qi) #(b,d,T)
-            # G_l_unnorm = (F.relu(torch.transpose(kl,1,2)@ql + bias))**2   # (b,T,T)
             kl = self.layers['linear_k_%d'%l](torch.transpose(ki,1,2))
             ql = self.layers['linear_q_%d'%l](torch.transpose(qi,1,2))      # (b,T,n_linear_feat)
             bias = self.graph_bias
             # this computes: G_l[b,i,j] = [RELU(dot(kl[b,i,:],ql[b,j,:]+b)]^2
             sparse_fn = getattr(F, self._hparams['Graph']['sparsity_fn'])
             G_l_unnorm = (sparse_fn(kl@torch.transpose(ql,1,2)+bias))**2       # (b,T,T)
-            Z = torch.sum(G_l_unnorm, dim=1, keepdim=True)                  #(b,T,T)
-            G_l = G_l_unnorm/(Z+EPSILON)                    # Z might be zero since RELU sets  all neg. values to 0
+            G_l_masked = G_l_unnorm * mask
+            Z = torch.sum(G_l_masked, dim=1, keepdim=True)                  #(b,T,T)
+            G_l = G_l_masked/(Z+EPSILON)                    # Z might be zero since RELU sets  all neg. values to 0
             G_.append(G_l)
         G = torch.stack(G_, dim=1) # (b,L,T,T)
         return G

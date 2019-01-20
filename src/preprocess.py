@@ -245,12 +245,12 @@ class Dataset():
         while start < len(sents):
             batch = [np.array(sents[i]) for i in idx[start: start+bsize]]
             start += bsize
-            # FIXME:T can differ for each training batch?
-            T = np.array([len(b) for b in batch]).max()
+            b_lens = np.array([len(b) for b in batch])
+            T = b_lens.max()
             max_len = min(max_len, T)
             padded = [_pad_or_trunc(b, max_len) for b in batch]
             out = np.array(padded).reshape((-1,max_len))
-            yield out
+            yield out, b_lens
 
 
 

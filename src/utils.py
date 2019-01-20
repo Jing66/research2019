@@ -3,6 +3,8 @@ import sys
 from io import StringIO
 import pandas as pd
 import numpy as np
+import torch
+import pdb
 
 def get_free_gpu():
     '''return the idx and free memory of the most free GPU'''
@@ -15,4 +17,18 @@ def get_free_gpu():
     return idx, int(gpu_df.iloc[idx]['memory.free'])
 
 
+def get_mask_2d(sequences_batch, sequences_lengths):
+    batch_size = sequences_batch.size()[0]
+    max_length = torch.max(sequences_lengths)
+    mask = torch.ones(batch_size, max_length, dtype=torch.float)
+    mask[sequences_batch[:, :max_length] == 0] = 0.0
+    return mask
 
+def get_mask_3d(seq_batch, mask_idx=0):
+    batch_sz = seq_batch.size()[0]
+    max_len = seq_batch.size()[1]
+    mask = torch.ones(batch_sz, max_len, max_len)
+    mask[seq_batch==mask_idx] = 0.0
+    mask2 = torch.transpose(mask,1,2)
+    mask2[seq_batch==mask_idx] = 0.0
+    return torch.autograd.Variable(mask2)

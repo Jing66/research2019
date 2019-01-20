@@ -2,7 +2,10 @@ import torch
 import torch.nn as nn
 from graph import Graph
 import layers
+import utils
 import pdb
+
+PAD = 0
 
 class LM(nn.Module):
     def __init__(self, vocab_sz, hparams, graph_predictor, logger, embd_weights=None):
@@ -18,12 +21,13 @@ class LM(nn.Module):
             self.layers['emb'].weight = nn.Parameter(embd_weights)
         self.modules = nn.ModuleList(list(self.layers.values()))    # has to register all modules, otherwise can't optimize 
 
+
     def build(self):
         self.drop = nn.Dropout(self._hparams['dropout'])
         emb_sz = self._hparams['embd_sz']
         hidden_sz = emb_sz          # in message-passing, embedding size must equal GRU hidden size
         # encoder
-        self.layers['emb'] = nn.Embedding(self._V, emb_sz)
+        self.layers['emb'] = nn.Embedding(self._V, emb_sz, sparse=True, padding_idx=PAD)
         cellClass = nn.GRUCell if self._hparams['Feature']['compose_fn']=='GRUCell' else layers.ResLinear
         for l in range(1,self._hparams['n_layers']+1):
             if l==1:
@@ -35,14 +39,16 @@ class LM(nn.Module):
         # decoder
         self.layers['decoder_rnn'] = nn.GRUCell(emb_sz,hidden_sz)
         self.layers['decoder_ff'] = nn.Linear(hidden_sz, self._V)
-        if self._hparams['Feature']['tie_weights']:
-            self.layers['decoder_ff'].weights = self.layers['emb'].weights.t()
+        # WRONG weight tying...
+        # if self._hparams['Feature']['tie_weights']:
+        #     self.layers['decoder_ff'].weights = self.layers['emb'].weight.t()
         
 
-    def forward(self, x):
+    def forward(self, x, lengths):
         '''
         args:
             x: [b,T] 
+            lengths: [b,]
         return:
             out: Tensor [b, Dx(T-D),|V|], where 
                 out[:,0:D,|V|]= decoder(<EOS>), 
@@ -50,16 +56,19 @@ class LM(nn.Module):
                 ...
                 out[:,(T-D-1)xD:(T-D)xD, |V|]=decoder(x_{T-D-2})
         '''
-        T = x.shape[-1]
+        T = x.shape[-1]             # max length
         b = x.shape[0]
         D = self._hparams['Feature']['context_sz']
+        mask = utils.get_mask_3d(x)       # (b,T,T)
+        if x.is_cuda:
+            mask = mask.cuda()
         # feature predictor -- encoder
         input_f = self.drop(self.layers['emb'](x)) # [b,T,embd_sz]
         embedded = input_f.clone()
         # compute graph affinity matrix
-        # TODO: what exactly is the input to Graph? word idx or embedding?
-        # input_g = torch.unsqueeze(x,1).float()  # [b,1,T]
-        G = self.G(torch.transpose(embedded,1,2)) #(b,L,T,T)
+        input_g = torch.transpose(embedded,1,2)         # [b,embd_sz, T]
+        pdb.set_trace()
+        G = self.G(input_g, mask)                #(b,L,T,T)
 
         for l in range(1, self._hparams['n_layers']+1):
             G_l = G[:,l-1,:,:]  #(b,T,T)
@@ -94,6 +103,7 @@ class LM(nn.Module):
                     next_in = embedded[:,t+d,:]
                 else:
                     next_in = self.drop(self.layers['emb'](idx))     #[b,1,embd_sz]
+            pdb.set_trace()
             xhat = torch.stack(xhat_t,dim=1)    # [b,D,|V|]
             out.append(xhat)
 

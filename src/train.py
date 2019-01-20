@@ -15,6 +15,7 @@ import utils
 from log_utils import get_logger
 global logger
 
+PAD = 0
 
 class ContextLMLoss(nn.Module):
 
@@ -35,7 +36,7 @@ class ContextLMLoss(nn.Module):
         losses = []
         for t in range(T-D):
             pred = Xhat[:,t*D:(t+1)*D,:]        # [b,D,|V|]
-            l = F.cross_entropy(torch.transpose(pred,1,2), X[:,t:t+D])
+            l = F.cross_entropy(torch.transpose(pred,1,2), X[:,t:t+D], ignore_index = PAD)
             logger.debug('loss per context:%6.2f'%l)
             losses.append(l)
         return sum(losses)/len(losses)
@@ -56,6 +57,7 @@ class Trainer():
         self._logger.info('Constructing model from data [%s] with hparams:\n%s...'\
                 %(self._data, json.dumps(self._hparams['Model'],indent=4)))
         dataset = Dataset.load_ds(self._data)
+        self._logger.info("Dataset info: %s"%str(dataset))
         T = self._hparams['Model']['max_len'] # upper bound of input length -- different batch can have different T
         self.g = Graph( self._hparams['Model'], self._logger)
         self._model = LM(dataset.vocab_sz, self._hparams['Model'], self.g, self._logger)
@@ -94,12 +96,15 @@ class Trainer():
             self._logger.info('=> Train epoch %d'%epoch)
             data_iter = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'train',T)
             losses = []
-            for step, data in enumerate(data_iter):
+            for step, (data, data_lens) in enumerate(data_iter):
                 d = torch.from_numpy(data).type(torch.LongTensor)
-                X= torch.autograd.Variable(d, requires_grad=False)
+                l = torch.from_numpy(data_lens).type(torch.LongTensor)
+                X = torch.autograd.Variable(d, requires_grad=False)
+                lens = torch.autograd.Variable(l, requires_grad=False)
                 if self._gpu:
                     X = X.cuda()
-                y_pred = self._model(X)         # X:[b,T], y_pred:[b,T, |V|]
+                    lens = lens.cuda()
+                y_pred = self._model(X, lens)         # X:[b,T], y_pred:[b,T, |V|]
                 loss = criterion(y_pred, X)
                 self._logger.debug('loss per batch = %f'%loss)
                 losses.append(loss.item())
@@ -119,12 +124,15 @@ class Trainer():
             self._logger.info("Start evaluating on dev set...")
             losses = []
             data_iter_eval = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'dev',T)
-            for step, data in enumerate(data_iter_eval):
+            for step, (data, data_lens) in enumerate(data_iter_eval):
                 d = torch.from_numpy(data).type(torch.LongTensor)
+                l = torch.from_numpy(data_lens).type(torch.LongTensor)
                 X= torch.autograd.Variable(d, requires_grad=False)
+                lens = torch.autograd.Variable(l, requires_grad=False)
                 if self._gpu:
                     X = X.cuda()
-                y_pred = self._model(X)
+                    lens = lens.cuda()
+                y_pred = self._model(X, lens)
                 loss = criterion(y_pred, X)
                 losses.append(loss.item())
             loss_per_epoch = np.array(losses).mean()
