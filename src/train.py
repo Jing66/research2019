@@ -24,20 +24,20 @@ class ContextLMLoss(nn.Module):
         self.D = context_sz
     
     
-    def forward(self, Xhat, X):
+    def forward(self, logprobs, X):
         '''
         loss function for language model training.
-            Xhat: [b, DxT,|V|]
+            logprobs: [b, DxT,|V|]
             X: [b,T]
         loss = sum_t{CrossEntropy(Xhat[:,t*D:(t+1)*D,|V|], X[:,t+1:t+D+1]) for t=0...T-1
         '''
         T = X.shape[1]            # NOTE: X[:,-1] is <EOS>
         D = self.D
         losses = []
-        for t in range(T-D):
-            pred = Xhat[:,t*D:(t+1)*D,:]        # [b,D,|V|]
-            l = F.cross_entropy(torch.transpose(pred,1,2), X[:,t:t+D], ignore_index = PAD)
-            logger.debug('loss per context:%6.2f'%l)
+        for t in range(T-D+1):
+            pred = logprobs[:,t*D:(t+1)*D,:]        # [b,D,|V|]
+            l = F.nll_loss(torch.transpose(pred,1,2), X[:,t:t+D], ignore_index = PAD)
+            logger.debug('loss per context L(Xhat[%d:%d], X[%d:%d]):%6.2f'%(t*D, (t+1)*D, t,t+D,l))
             losses.append(l)
         return sum(losses)/len(losses)
 
@@ -59,8 +59,11 @@ class Trainer():
         dataset = Dataset.load_ds(self._data)
         self._logger.info("Dataset info: %s"%str(dataset))
         T = self._hparams['Model']['max_len'] # upper bound of input length -- different batch can have different T
+
+        # build model, loss, optimizer
         self.g = Graph( self._hparams['Model'], self._logger)
-        self._model = LM(dataset.vocab_sz, self._hparams['Model'], self.g, self._logger)
+        vocab_cutoff = dataset.cutoff_vocab(self._hparams['Trainer']['vocab_clusters'])
+        self._model = LM(dataset.vocab_sz, self._hparams['Model'], self.g, self._logger,vocab_cutoff )
         criterion = ContextLMLoss(self._hparams['Model']['Feature']['context_sz'])
         self._logger.info('Constructing optimizer: %s' %self._hparams['Trainer']['optimizer'])
         optimizer = getattr(torch.optim, self._hparams['Trainer']['optimizer'])
@@ -90,7 +93,7 @@ class Trainer():
                 for k, v in state.items():
                     if isinstance(v, torch.Tensor):
                         state[k] = v.cuda()
-
+        # training steps
         self._logger.info('Start training with best_loss %6.4f, \nhparams:\n %s'%(best_loss, json.dumps(hparams['Trainer'], indent=4)))
         for epoch in range(start_epoch, start_epoch + self._hparams['Trainer']['epoch']):
             self._logger.info('=> Train epoch %d'%epoch)
@@ -167,12 +170,12 @@ class Trainer():
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description='Process some integers.')
     parser.add_argument('-c','--config', default='./experiment/config.json',
-                        help='path to config file, default ./experiment/config.json')
+                        help='path to config file, default ./experiment/toy_config.json')
     parser.add_argument('-r', '--resume', default=None, type=str, 
                         help='path to last checkpoint model')
-    parser.add_argument('-d', '--data_dir', default='data/wiki', 
+    parser.add_argument('-d', '--data_dir', default='data/out', 
                         help='path to data folder')
-    parser.add_argument('-l', '--log_fname', default='', 
+    parser.add_argument('-l', '--log_fname', default='train', 
                         help='generate logs in fname.log')
     parser.add_argument('-s', '--save_dir', default='experiment/expr001', 
                         help='path to save trained model')
@@ -183,7 +186,7 @@ if __name__=="__main__":
     args = parser.parse_args()
     args.device=None
 
-    logger = get_logger(args.log_fname, args.debug)
+    logger = get_logger(args.log_fname, args.debug, args.save_dir)
     logger.info("Setting pytorch/numpy random seed to %s"%args.seed)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

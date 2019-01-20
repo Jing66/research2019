@@ -7,9 +7,11 @@ import os
 import argparse
 import itertools
 import matplotlib.pyplot as plt
+from scipy import stats
 
 from log_utils import  get_logger
 global logger
+import pdb
 
 PAD = 0
 EOS = 1
@@ -37,12 +39,13 @@ def normalize_str(s):
 
 
 class Dataset():
-    def __init__(self, train=[], dev=[], test=[] ,vocab={'PAD':PAD, 'EOS':EOS,'UNK':UNK}):
+    def __init__(self, train=[], dev=[], test=[] ,vocab={'PAD':PAD, 'EOS':EOS,'UNK':UNK}, w_freq=None):
         self._train = train
         self._test = test
         self._dev = dev
         self._vocab = vocab
         self._vocab_sz = len(vocab)
+        self.w_freq = w_freq        # frequency of each word in vocab, starting from index 3
 
     @property
     def vocab_sz(self):
@@ -59,35 +62,6 @@ class Dataset():
 
     def __len__(self):
         return len(self._train)
-
-    #def filter_docs(self, lower, upper):
-    #    '''filter out docs with #sentence < lower or > upper, return new Dataset'''
-    #    logger.info('--filtering docs with length (#sentence) out of range (%s, %s)' %(lower,upper))
-    #    lens = self._sent_bound[1:] - self._sent_bound[:-1]
-    #    valid = np.argwhere((lens>lower) & (lens<upper)).ravel() # idx for valid doc
-    #    valid_bound = np.cumsum(lens[valid]) # sentence boundary for valid docs
-    #    valid_bound = np.concatenate((np.zeros(1),valid_bound)) # always has 0 at front
-    #    docs = [self.get_doc(i) for i in valid] # [doc1=[sent1,sent2...]]
-    #    sents = list(itertools.chain.from_iterable(docs)) 
-    #    # pdb.set_trace()
-    #    return Dataset(sents,valid_bound,self._vocab)
-
-
-    #def filter_sents(self, lower, upper):
-    #    logger.info('--filtering sentences with length (#words) out of range (%s, %s)' %(lower,upper))
-    #    lens = np.array([len(s) for s in self._sents])
-    #    valid = np.argwhere((lens>lower) & (lens<upper)).ravel() # idx for valid sentences
-    #    invalid = np.argwhere((lens<=lower) | (lens>=upper)).ravel()
-    #    sents = [self._sents[i] for i in valid]
-    #    bins = np.digitize(invalid,self._sent_bound) - 1 
-    #    bins[-1] = bins[-1]-1 if bins[-1]==len(self._sent_bound)-1 else bins[-1]
-    #    slens = self._sent_bound[1:] - self._sent_bound[:-1]
-    #    lsent = np.bincount(bins) 
-    #    nlens = slens -  _pad(lsent,len(slens)) # how many sentences less per doc
-    #    valid_bound = np.concatenate((np.zeros(1),np.cumsum(nlens)))
-    #    # pdb.set_trace()
-    #    return Dataset(sents, valid_bound, self._vocab)
-
 
 
     @classmethod
@@ -127,10 +101,17 @@ class Dataset():
                 continue                # sentence too short
             for w in words:
                 word2freq[w] = word2freq.get(w,0)+1
+
+        # for LM: make sure more frequent words have lower index     
+        word2freq = sorted(word2freq.items(), key=lambda kv:-kv[1])
         # filter out infrequent words in vocab, remap vocab
-        for w, freq in word2freq.items():
+        w_freq = []
+        for w, freq in word2freq:
             if freq > UNK_THRES:
                 self._vocab[w] = len(self._vocab)
+                w_freq.append(freq)
+        assert len(w_freq)+3==len(self._vocab), "something wrong with preprocessing"
+        self.w_freq = np.array(w_freq)
 
         # train -- convert to idx and map to vocab
         logger.info('Processing training set with new vocab')
@@ -179,6 +160,7 @@ class Dataset():
             file_object.write(serialized)
         with open('%s/vocab.json'%d, "w") as f:
             json.dump(self._vocab,f)
+        np.save('%s/w_freq'%d, self.w_freq)
 
     @classmethod
     def load_ds(cls, d):
@@ -193,7 +175,36 @@ class Dataset():
         dev = pickle.loads(serialized)
         with open('%s/vocab.json'%d, "r") as read_file:
             vocab = json.load(read_file)
-        return Dataset(train,dev,test, vocab)
+        w_freq = np.load('%s/w_freq.npy'%d)
+        return Dataset(train,dev,test, vocab, w_freq)
+
+
+    def cutoff_vocab(self, n_clusters):
+        '''return a list of length n_clusters:[idx1, idx2, idx3], where sum(frequence) of each slice are approx same.
+        eg, if return [10,100,1000], then sum(freq(v) for v in vocab[0:10]) == sum(freq(v) for v in vocab[10:100])
+        '''
+        appearance_per_cluster = np.sum(self.w_freq) // n_clusters
+        cum_appr = np.cumsum(self.w_freq)
+        cum_cut = np.cumsum(np.repeat(appearance_per_cluster, n_clusters))
+        dig = np.digitize(cum_appr, cum_cut)
+        cutoff = []
+        for i in range(n_clusters-1):
+            c = np.argwhere(cum_appr > cum_cut[i]).min()
+            
+            cutoff.append(c+3)          # offset for pad/unk/eos
+        return cutoff
+
+
+    def n_unks(self, mode='dev'):
+        '''return number of UNK in dataset. mode='dev' or 'test' '''
+        n_unk = 0
+        tot = 0
+        for sent in getattr(self, '_'+mode):
+            sent = np.array(sent)
+            n_unk += (sent==UNK).sum()
+            tot += len(sent)
+        return n_unk/tot
+
 
     def __str__(self):
         '''print out information about this dataset'''
@@ -201,6 +212,10 @@ class Dataset():
         s += 'Dataset size (#sentences): train--%s, dev--%s, test--%s.'\
                     %(len(self._train),len(self._dev),len(self._test))
         s += '\nVocab size obtained from training set: %s'%self.vocab_sz
+        s += '\ntop 10 frequent words are %s, appeared %s times' \
+                    %(str(list(self._vocab.keys())[3:13]), str(self.w_freq[:10]))
+        s += '\nPctg of unk in dev set: %6.3f; in test set: %6.3f' %(100*self.n_unks('dev'), 100*self.n_unks('test'))
+
         alllens = np.array([len(s) for s in self._train+self._test+self._dev])
         s += '\nDataset sentence length info: max--%s, min--%s, mean--%s, median--%s'\
                 %(alllens.max(), alllens.min(), np.mean(alllens), np.median(alllens))
@@ -246,11 +261,14 @@ class Dataset():
             batch = [np.array(sents[i]) for i in idx[start: start+bsize]]
             start += bsize
             b_lens = np.array([len(b) for b in batch])
+            indices = (-b_lens).argsort()
             T = b_lens.max()
             max_len = min(max_len, T)
-            padded = [_pad_or_trunc(b, max_len) for b in batch]
+            padded = [_pad_or_trunc(batch[i], max_len) for i in indices]
             out = np.array(padded).reshape((-1,max_len))
-            yield out, b_lens
+            lens = - np.sort(-b_lens)
+            lens[lens>max_len] = max_len
+            yield out, lens
 
 
 
@@ -259,15 +277,17 @@ class Dataset():
 def __test(args):
     logger.info("Testing with input_files" + str(args.input_files)+"out_dir:"+str(args.out_dir))
     in_files =args.input_files
-    ds = Dataset.load_save_docs(in_files, args.out_dir)
+    # ds = Dataset.load_save_docs(in_files, args.out_dir)
     logger.info("loading saved dataset")
     ds2 = Dataset.load_ds(args.out_dir)
     logger.info(ds2)
+    cutoffs = ds.cutoff_vocab(5)
+    print('vocab in 10 cutoffs', cutoffs)
     dg = ds2.make_batch(200, 'test',max_len=100)
     while True:
         try:
-            data = next(dg)
-            print('data', data.shape, data[0], data[-1])
+            data, lengths = next(dg)
+            print('data', data.shape, data[0], data[-1], lengths)
         except StopIteration:
             print("data set all consumed!")
             break
