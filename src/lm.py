@@ -1,3 +1,4 @@
+import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -34,9 +35,6 @@ class LM(nn.Module):
         self.layers['emb'] = nn.Embedding(self._V, emb_sz, sparse=True, padding_idx=PAD)
         cellClass = nn.GRUCell if self._hparams['Feature']['compose_fn']=='GRUCell' else layers.ResLinear
         for l in range(1,self._hparams['n_layers']+1):
-            if l==1:
-                cell = cellClass(emb_sz, hidden_sz)
-            else:
                 cell = cellClass(hidden_sz, hidden_sz)
             self.layers['encoder_%d'%l] = cell
 
@@ -48,7 +46,10 @@ class LM(nn.Module):
         else:
             self.layers['decoder_rnn'] = nn.GRUCell(emb_sz,hidden_sz)
         # Use Adaptive softmax instead of softmax(Linear) to save GPU memory
-        self.layers['decoder_remap'] = nn.AdaptiveLogSoftmaxWithLoss(hidden_sz, self._V, cutoffs)
+        _cluster_sz = 5
+        div_val = math.log(hidden_sz/_cluster_sz, len(cutoffs)+1)
+        div_val = min(4.0, math.floor(div_val*10)/10)
+        self.layers['decoder_remap'] = nn.AdaptiveLogSoftmaxWithLoss(hidden_sz, self._V, cutoffs, div_val)
 
     def forward(self, x, lengths):
         '''

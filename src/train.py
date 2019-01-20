@@ -62,7 +62,7 @@ class Trainer():
 
         # build model, loss, optimizer
         self.g = Graph( self._hparams['Model'], self._logger)
-        vocab_cutoff = dataset.cutoff_vocab(self._hparams['Trainer']['vocab_cutoff'])
+        vocab_cutoff = dataset.cutoff_vocab(self._hparams['Trainer']['vocab_clusters'])
         self._model = LM(dataset.vocab_sz, self._hparams['Model'], self.g, self._logger,vocab_cutoff )
         criterion = ContextLMLoss(self._hparams['Model']['Feature']['context_sz'])
         self._logger.info('Constructing optimizer: %s' %self._hparams['Trainer']['optimizer'])
