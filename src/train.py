@@ -33,15 +33,16 @@ class Trainer():
         data_iter = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'train',max_len)
         losses = 0
         for step, (data, data_lens) in enumerate(data_iter):
-            d = torch.from_numpy(data).type(torch.LongTensor)
-            l = torch.from_numpy(data_lens).type(torch.LongTensor)
-            X = torch.autograd.Variable(d, requires_grad=False)
-            lens = torch.autograd.Variable(l, requires_grad=False)
-            if self._gpu:
+            # torch.cuda.empty_cache()
+            data = torch.from_numpy(data).type(torch.LongTensor)
+            data_lens = torch.from_numpy(data_lens).type(torch.LongTensor)
+            X = torch.autograd.Variable(data, requires_grad=False)
+            lens = torch.autograd.Variable(data_lens, requires_grad=False)
+            if self._gpu is not None:
                 X = X.cuda()
                 lens = lens.cuda()
             self._opt.zero_grad()
-            pdb.set_trace()
+            # pdb.set_trace()
             # y_pred = self._model(X, lens)         # X:[b,T], y_pred:[b,T, |V|]
             # loss = criterion(y_pred, X)
             loss = self._model(X, lens)
@@ -51,7 +52,6 @@ class Trainer():
             nn.utils.clip_grad_norm_(self._model.parameters(), 2)  # gradient clipping
             loss.backward()
             self._opt.step()
-
         loss_per_epoch = losses/step
 
         if  math.isnan(loss_per_epoch):
@@ -83,7 +83,7 @@ class Trainer():
         # if there's checkpoint
         if self._ckpt:
             logger.info('Loading checkpoint from %sexprt.ckpt...'%self._ckpt)
-            if not self._gpu:
+            if self._gpu is None:
                 checkpoint = torch.load("%s/exprt.ckpt"%self._ckpt, map_location=lambda storage, loc: storage)
             else:
                 checkpoint = torch.load("%s/exprt.ckpt"%self._ckpt)
@@ -93,7 +93,7 @@ class Trainer():
             self._opt.load_state_dict(checkpoint['optimizer'])
             self._logger.info("checkpoint experiment loaded")
 
-        if self._gpu:
+        if self._gpu is not None:
             self.g.cuda()
             self._model.cuda()
             criterion.cuda()
@@ -107,32 +107,42 @@ class Trainer():
             epoch_start = time.time()
             loss_per_epoch = self.run_one_epoch(dataset, epoch, T)
             epoch_time = time.time() - epoch_start
-            self._logger.info('epoch %d done, training time=%s, training loss=%6.4f'%(epoch, str(timedelta(seconds=epoch_time)) , loss_per_epoch))
+            self._logger.info('epoch %d done, training time=[%s], training loss=[%6.4f]'%(epoch, str(timedelta(seconds=epoch_time)) , loss_per_epoch))
+
 
             # evaluate every epoch
-            self._logger.info("Start evaluating on dev set...")
-            losses = 0
-            data_iter_eval = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'dev',T)
+            valid_start = time.time()
+            loss_per_validate = self.validate(dataset, T)
+            valid_time = time.time() - valid_start
+            self._logger.info('eval on epoch %d done, eval time=[%s], dev loss=%6.4f'%(epoch,str(timedelta(seconds=valid_time)), loss_per_validate))
+
+            # save best model on dev set
+            if loss_per_validate < best_loss:
+                best_loss = loss_per_validate
+                self.save(savedir, best_loss, epoch)
+                self._logger.info('>>New best validation loss: %s. Model saved into %s/exprt.ckpt'%(best_loss, savedir))
+            
+
+
+    def validate(self, dataset, max_len):
+        self._logger.info("Start evaluating on dev set...")
+        losses = 0
+        data_iter_eval = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'dev',max_len)
+        with torch.no_grad():
             for step, (data, data_lens) in enumerate(data_iter_eval):
                 d = torch.from_numpy(data).type(torch.LongTensor)
                 l = torch.from_numpy(data_lens).type(torch.LongTensor)
                 X= torch.autograd.Variable(d, requires_grad=False)
                 lens = torch.autograd.Variable(l, requires_grad=False)
-                if self._gpu:
+                if self._gpu is  not None:
                     X = X.cuda()
                     lens = lens.cuda()
                 # y_pred = self._model(X, lens)
                 # loss = criterion(y_pred, X)
                 loss = self._model(X, lens)
                 losses += loss.detach().cpu().item()
-            loss_per_epoch = losses/(step+1)
-            self._logger.info('eval on epoch %d done, dev loss=%6.4f'%(epoch, loss_per_epoch))
-            # save best model on dev set
-            if loss_per_epoch < best_loss:
-                best_loss = loss_per_epoch
-                self.save(savedir, best_loss, epoch)
-                self._logger.info('>>New best validation loss: %s. Model saved into %s/exprt.ckpt'%(best_loss, savedir))
-            
+        loss_per_epoch = losses/(step+1)
+        return loss_per_epoch
 
 
 
@@ -183,7 +193,7 @@ if __name__=="__main__":
             args.device = free_gpu
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device)
     logger.info("Using free GPU: %s"%args.device)
-        
+
     torch.cuda.manual_seed(args.seed)
         
     hparams = json.load(open(args.config,'r'))
@@ -192,6 +202,6 @@ if __name__=="__main__":
         logger.info('Overriding hparams from %s/config.json...'%args.resume)
         hparams = json.load(open('%s/config.json'%args.resume,'r'))
 
-    trainer = Trainer( hparams,args.data_dir,args.resume, logger, args.device)
+    trainer = Trainer( hparams,args.data_dir,args.resume, logger,args.device)
     trainer.train(args.save_dir) 
 

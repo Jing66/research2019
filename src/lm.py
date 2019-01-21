@@ -31,7 +31,7 @@ class LM(nn.Module):
         emb_sz = self._hparams['embd_sz']
         hidden_sz = emb_sz          # in message-passing, embedding size must equal GRU hidden size
         # encoder
-        self.layers['emb'] = nn.Embedding(self._V, emb_sz, sparse=True, padding_idx=PAD)
+        self.layers['emb'] = nn.Embedding(self._V, emb_sz, padding_idx=PAD)
         cellClass = nn.GRUCell if self._hparams['Feature']['compose_fn']=='GRUCell' else layers.ResLinear
         for l in range(1,self._hparams['n_layers']+1):
             cell = cellClass(hidden_sz, hidden_sz)
@@ -66,15 +66,14 @@ class LM(nn.Module):
         T = x.shape[-1]             # max length
         b = x.shape[0]
         D = self._hparams['Feature']['context_sz']
+        # feature predictor -- encoder
+        input_f = self.drop(self.layers['emb'](x)) # [b,T,embd_sz]
         mask = utils.get_mask_3d(x)       # (b,T,T)
         if is_cuda:
             mask = mask.cuda()
-        # feature predictor -- encoder
-        input_f = self.drop(self.layers['emb'](x)) # [b,T,embd_sz]
-        embedded = input_f.clone()
+        embedded = input_f
         # compute graph affinity matrix
-        input_g = torch.transpose(embedded,1,2)         # [b,embd_sz, T]
-        G = self.G(input_g, mask)                #(b,L,T,T)
+        G = self.G(embedded, mask)                #(b,L,T,T)
 
         for l in range(1, self._hparams['n_layers']+1):
             G_l = G[:,l-1,:,:]  #(b,T,T)
@@ -91,6 +90,7 @@ class LM(nn.Module):
                 input_f = input_f.view(b,T,-1)
 
         # ----------------------- decoder -- input_f: [b,T,hidden] -----------------
+        # pdb.set_trace()
         logprobs = []
         next_in = embedded[torch.arange(b),lengths-1,:]      # input to decoder at t0: <EOS>
         n_padding= 0
@@ -124,7 +124,7 @@ class LM(nn.Module):
                 packed_output, _ = self.layers['decoder_rnn'](packed_input, torch.unsqueeze(h0_t,0).contiguous())      
                 output, _ = nn.utils.rnn.pad_packed_sequence(packed_output)     # [b,D,hidden]
                 output = output.transpose(0,1).contiguous().view((b-n_padding)*D,-1).contiguous()
-                logprob = self.layers['decoder_remap'].log_prob(output).view((b-n_padding),D,-1)          #[b,D, |V|]
+                # logprob = self.layers['decoder_remap'].log_prob(output).view((b-n_padding),D,-1)          #[b,D, |V|]
                 # logprob = F.pad(logprob, (0,0,0,0,0,n_padding))
                 # logprobs.append(logprob
                 _, loss = self.layers['decoder_remap'](output, x[:(b-n_padding),t:t+D].contiguous().view(-1))

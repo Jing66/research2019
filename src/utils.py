@@ -1,5 +1,6 @@
 import subprocess
 import sys
+import gc
 from io import StringIO
 import pandas as pd
 import numpy as np
@@ -32,3 +33,13 @@ def get_mask_3d(seq_batch, mask_idx=0):
     mask2 = torch.transpose(mask,1,2)
     mask2[seq_batch==mask_idx] = 0.0
     return torch.autograd.Variable(mask2)
+
+
+
+def memReport():
+    count=0
+    for obj in gc.get_objects():
+        if torch.is_tensor(obj):
+            print(type(obj), obj.size())
+            count+=1
+    print("total", count)

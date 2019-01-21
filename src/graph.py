@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import utils
 import pdb
 EPSILON = 1e-4
 
@@ -42,15 +43,15 @@ class Graph(nn.Module):
 
     def forward(self, x, mask):
         ''' 
-             x: [x_1...x_T] input, shape (b, d, T)
-             mask: shape (b,T,T)
+             x: [x_1...x_T] input, shape (b, T, d)
              return: G, shape (b, L, T, T)
         '''
+        x = torch.transpose(x,1,2)          # [b,d,T]
         G_ = []
         for l in range(self._hparams['n_layers']):
             # pdb.set_trace()
             ki = self.layers['k_conv_%d'%l](x)
-            qi = self.layers['q_conv_%d'%l](x) # (b, n_filters, T)
+            qi = self.layers['q_conv_%d'%l](x)                  # (b, n_filters, T)
             kl = self.layers['linear_k_%d'%l](torch.transpose(ki,1,2))
             ql = self.layers['linear_q_%d'%l](torch.transpose(qi,1,2))      # (b,T,n_linear_feat)
             bias = self.graph_bias
