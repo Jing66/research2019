@@ -6,6 +6,8 @@ import torch.nn.functional as F
 import numpy as np
 import os
 import argparse
+import time
+from datetime import timedelta
 import pdb
 
 from preprocess import Dataset
@@ -49,7 +51,38 @@ class Trainer():
         self._logger = _logger
         self._gpu = gpu
         self._ckpt = ckpt
-        self._logger.info("Device on %s"%self._gpu)
+
+
+    def run_one_epoch(self, dataset, epoch, max_len):
+        self._logger.info('=> Training epoch %d'%epoch)
+        data_iter = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'train',max_len)
+        losses = 0
+        for step, (data, data_lens) in enumerate(data_iter):
+            d = torch.from_numpy(data).type(torch.LongTensor)
+            l = torch.from_numpy(data_lens).type(torch.LongTensor)
+            X = torch.autograd.Variable(d, requires_grad=False)
+            lens = torch.autograd.Variable(l, requires_grad=False)
+            if self._gpu:
+                X = X.cuda()
+                lens = lens.cuda()
+            self._opt.zero_grad()
+            pdb.set_trace()
+            # y_pred = self._model(X, lens)         # X:[b,T], y_pred:[b,T, |V|]
+            # loss = criterion(y_pred, X)
+            loss = self._model(X, lens)
+            self._logger.debug('loss per batch = %f'%loss)
+            losses+=loss.detach().cpu().item()
+
+            nn.utils.clip_grad_norm_(self._model.parameters(), 2)  # gradient clipping
+            loss.backward()
+            self._opt.step()
+
+        loss_per_epoch = losses/step
+
+        if  math.isnan(loss_per_epoch):
+            self._logger.error("Get NaN loss for epoch %d-- exiting" %epoch)
+            System.exit(1)
+        return loss_per_epoch
 
 
 
@@ -96,36 +129,14 @@ class Trainer():
         # training steps
         self._logger.info('Start training with best_loss %6.4f, \nhparams:\n %s'%(best_loss, json.dumps(hparams['Trainer'], indent=4)))
         for epoch in range(start_epoch, start_epoch + self._hparams['Trainer']['epoch']):
-            self._logger.info('=> Train epoch %d'%epoch)
-            data_iter = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'train',T)
-            losses = []
-            for step, (data, data_lens) in enumerate(data_iter):
-                d = torch.from_numpy(data).type(torch.LongTensor)
-                l = torch.from_numpy(data_lens).type(torch.LongTensor)
-                X = torch.autograd.Variable(d, requires_grad=False)
-                lens = torch.autograd.Variable(l, requires_grad=False)
-                if self._gpu:
-                    X = X.cuda()
-                    lens = lens.cuda()
-                y_pred = self._model(X, lens)         # X:[b,T], y_pred:[b,T, |V|]
-                loss = criterion(y_pred, X)
-                self._logger.debug('loss per batch = %f'%loss)
-                losses.append(loss.item())
-
-                nn.utils.clip_grad_norm_(self._model.parameters(), 2)  # gradient clipping
-                self._opt.zero_grad()
-                loss.backward()
-                self._opt.step()
-
-            loss_per_epoch = np.array(losses).mean()
-            if  math.isnan(loss_per_epoch):
-                self._logger.error("Get NaN loss for epoch %d-- exiting" %epoch)
-                System.exit(1)
-            self._logger.info('epoch %d done, training loss=%6.4f'%(epoch, loss_per_epoch))
+            epoch_start = time.time()
+            loss_per_epoch = self.run_one_epoch(dataset, epoch, T)
+            epoch_time = time.time() - epoch_start
+            self._logger.info('epoch %d done, training time=%s, training loss=%6.4f'%(epoch, str(timedelta(seconds=epoch_time)) , loss_per_epoch))
 
             # evaluate every epoch
             self._logger.info("Start evaluating on dev set...")
-            losses = []
+            losses = 0
             data_iter_eval = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'dev',T)
             for step, (data, data_lens) in enumerate(data_iter_eval):
                 d = torch.from_numpy(data).type(torch.LongTensor)
@@ -135,16 +146,17 @@ class Trainer():
                 if self._gpu:
                     X = X.cuda()
                     lens = lens.cuda()
-                y_pred = self._model(X, lens)
-                loss = criterion(y_pred, X)
-                losses.append(loss.item())
-            loss_per_epoch = np.array(losses).mean()
+                # y_pred = self._model(X, lens)
+                # loss = criterion(y_pred, X)
+                loss = self._model(X, lens)
+                losses += loss.detach().cpu().item()
+            loss_per_epoch = losses/(step+1)
             self._logger.info('eval on epoch %d done, dev loss=%6.4f'%(epoch, loss_per_epoch))
             # save best model on dev set
             if loss_per_epoch < best_loss:
                 best_loss = loss_per_epoch
                 self.save(savedir, best_loss, epoch)
-                self._logger.info('>>New best loss: %s. Model saved into %s/exprt.ckpt'%(best_loss, savedir))
+                self._logger.info('>>New best validation loss: %s. Model saved into %s/exprt.ckpt'%(best_loss, savedir))
             
 
 
@@ -179,12 +191,12 @@ if __name__=="__main__":
                         help='generate logs in fname.log')
     parser.add_argument('-s', '--save_dir', default='experiment/expr001', 
                         help='path to save trained model')
+    parser.add_argument('--device',type=int, default=None)
     parser.add_argument('--seed', default=999, type=int, help="torch random seed")
     parser.add_argument('--cpu', dest='cpu', default=False, action='store_true')
     parser.add_argument('--debug', dest='debug', default=False, action='store_true')
 
     args = parser.parse_args()
-    args.device=None
 
     logger = get_logger(args.log_fname, args.debug, args.save_dir)
     logger.info("Setting pytorch/numpy random seed to %s"%args.seed)
@@ -192,11 +204,13 @@ if __name__=="__main__":
     np.random.seed(args.seed)
 
     free_gpu, free_mem  = utils.get_free_gpu()
-    if free_mem > 1000 and not args.cpu:
-        os.environ["CUDA_VISIBLE_DEVICES"] = str(free_gpu)
-        args.device=torch.device('cuda:0')
-        torch.cuda.manual_seed(args.seed)
-
+    if free_mem > 1000 and not args.cpu and not args.device :
+            args.device = free_gpu
+    os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device)
+    logger.info("Using free GPU: %s"%args.device)
+        
+    torch.cuda.manual_seed(args.seed)
+        
     hparams = json.load(open(args.config,'r'))
     if args.resume:
         args.resume += "/" if args.resume[-1]!="/" else ""

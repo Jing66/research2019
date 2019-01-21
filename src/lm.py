@@ -123,10 +123,12 @@ class LM(nn.Module):
                 packed_input = nn.utils.rnn.pack_padded_sequence(inputs, lens, batch_first=True)
                 packed_output, _ = self.layers['decoder_rnn'](packed_input, torch.unsqueeze(h0_t,0).contiguous())      
                 output, _ = nn.utils.rnn.pad_packed_sequence(packed_output)     # [b,D,hidden]
-                output = output.transpose(0,1).contiguous()
-                logprob = self.layers['decoder_remap'].log_prob(output.view((b-n_padding)*D, -1)).view((b-n_padding),D,-1)          #[b,D, |V|]
-                logprob = F.pad(logprob, (0,0,0,0,0,n_padding))
-
+                output = output.transpose(0,1).contiguous().view((b-n_padding)*D,-1).contiguous()
+                logprob = self.layers['decoder_remap'].log_prob(output).view((b-n_padding),D,-1)          #[b,D, |V|]
+                # logprob = F.pad(logprob, (0,0,0,0,0,n_padding))
+                # logprobs.append(logprob
+                _, loss = self.layers['decoder_remap'](output, x[:(b-n_padding),t:t+D].contiguous().view(-1))
+                logprobs.append(loss)
             # ----- CASE use scheduled sampling
             else:
                 next_hidden = h0_t
@@ -155,6 +157,7 @@ class LM(nn.Module):
                         next_in, next_hidden = next_, h
             
                 logprob = torch.stack(xhat_t,dim=1)    # [b,D,|V|]
-            logprobs.append(logprob)
+                logprobs.append(logprob)
         # should output a tensor of [b,Dx(T-D+1),|V|]
-        return torch.cat(logprobs,dim=1)
+        # return torch.cat(logprobs,dim=1)
+        return sum(logprobs)/len(logprobs)
