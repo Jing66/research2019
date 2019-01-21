@@ -15,33 +15,8 @@ from lm import LM
 from graph import Graph
 import utils
 from log_utils import get_logger
+from lossFn import ContextLMLoss
 global logger
-
-PAD = 0
-
-class ContextLMLoss(nn.Module):
-
-    def __init__(self, context_sz):
-        super(ContextLMLoss, self).__init__()
-        self.D = context_sz
-    
-    
-    def forward(self, logprobs, X):
-        '''
-        loss function for language model training.
-            logprobs: [b, DxT,|V|]
-            X: [b,T]
-        loss = sum_t{CrossEntropy(Xhat[:,t*D:(t+1)*D,|V|], X[:,t+1:t+D+1]) for t=0...T-1
-        '''
-        T = X.shape[1]            # NOTE: X[:,-1] is <EOS>
-        D = self.D
-        losses = []
-        for t in range(T-D+1):
-            pred = logprobs[:,t*D:(t+1)*D,:]        # [b,D,|V|]
-            l = F.nll_loss(torch.transpose(pred,1,2), X[:,t:t+D], ignore_index = PAD)
-            logger.debug('loss per context L(Xhat[%d:%d], X[%d:%d]):%6.2f'%(t*D, (t+1)*D, t,t+D,l))
-            losses.append(l)
-        return sum(losses)/len(losses)
 
 
 class Trainer():
@@ -97,7 +72,7 @@ class Trainer():
         self.g = Graph( self._hparams['Model'], self._logger)
         vocab_cutoff = dataset.cutoff_vocab(self._hparams['Trainer']['vocab_clusters'])
         self._model = LM(dataset.vocab_sz, self._hparams['Model'], self.g, self._logger,vocab_cutoff )
-        criterion = ContextLMLoss(self._hparams['Model']['Feature']['context_sz'])
+        criterion = ContextLMLoss(self._hparams['Model']['Feature']['context_sz'], self._logger)
         self._logger.info('Constructing optimizer: %s' %self._hparams['Trainer']['optimizer'])
         optimizer = getattr(torch.optim, self._hparams['Trainer']['optimizer'])
         self._opt = optimizer(self._model.parameters(),self._hparams['Trainer']['lr'])
