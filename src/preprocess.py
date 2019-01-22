@@ -16,9 +16,9 @@ import pdb
 PAD = 0
 EOS = 1
 UNK = 2
-UNK_THRES = 5       # if a word appears <UNK_THRES times, make it UNK
+UNK_THRES = 20       # if a word appears <UNK_THRES times, make it UNK
 RATIO = [7.5,1.5,1]     # ratio of train/dev/test split
-SENT_THRES = 5      # if a sentence has < SNET_THRES words, ignore it
+SENT_THRES = 7      # if a sentence has < SNET_THRES words, ignore it
 
 
 def _pad_or_trunc(arr, size):
@@ -248,7 +248,7 @@ class Dataset():
 
 
 
-    def make_batch(self, bsize, mode, shuffle=True, max_len=np.inf):
+    def make_batch(self, bsize, mode, shuffle=True, max_len=np.inf, max_sample = np.inf):
         '''make a batch of padded sentences with length up to max_len. If too long, truncate
             -- mode: str, "train"/"dev"/"test"
         '''
@@ -257,7 +257,7 @@ class Dataset():
         if shuffle:
             idx = np.random.permutation(len(sents))
         start = 0
-        while start < len(sents):
+        while start < min(len(sents), max_sample):
             batch = [np.array(sents[i]) for i in idx[start: start+bsize]]
             start += bsize
             b_lens = np.array([len(b) for b in batch])

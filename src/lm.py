@@ -21,7 +21,7 @@ class LM(nn.Module):
         # if embedding weights are provided
         if embd_weights:
             self.layers['emb'].weight = nn.Parameter(embd_weights)
-        self.modules = nn.ModuleList(list(self.layers.values()))    # has to register all modules, otherwise can't optimize 
+        self.modules = nn.ModuleList(list(self.layers.values()))
 
 
     def build(self, cutoffs):
@@ -49,6 +49,8 @@ class LM(nn.Module):
         div_val = math.log(hidden_sz/_cluster_sz, len(cutoffs)+1)
         div_val = min(4.0, math.floor(div_val*10)/10)
         self.layers['decoder_remap'] = nn.AdaptiveLogSoftmaxWithLoss(hidden_sz, self._V, cutoffs, div_val)
+
+
 
     def forward(self, x, lengths):
         '''
@@ -108,7 +110,6 @@ class LM(nn.Module):
 
             # ------ CASE teacher forcing, use packed_padded_seq to speed up
             if p_ss == 0.0:
-                # pdb.set_trace()
                 if t>0:
                     inputs = embedded[:, t-1:t-1+D,: ]   # inputs: [b,D,hidden]
                 else:
@@ -119,7 +120,6 @@ class LM(nn.Module):
                 if is_cuda:
                     _tmp = _tmp.cuda()
                 lens = torch.min(lengths[:(b-n_padding)]-t, _tmp.expand(inputs.shape[0]))
-                # pdb.set_trace()
                 packed_input = nn.utils.rnn.pack_padded_sequence(inputs, lens, batch_first=True)
                 packed_output, _ = self.layers['decoder_rnn'](packed_input, torch.unsqueeze(h0_t,0).contiguous())      
                 output, _ = nn.utils.rnn.pad_packed_sequence(packed_output)     # [b,D,hidden]
@@ -127,6 +127,7 @@ class LM(nn.Module):
                 # logprob = self.layers['decoder_remap'].log_prob(output).view((b-n_padding),D,-1)          #[b,D, |V|]
                 # logprob = F.pad(logprob, (0,0,0,0,0,n_padding))
                 # logprobs.append(logprob
+
                 _, loss = self.layers['decoder_remap'](output, x[:(b-n_padding),t:t+D].contiguous().view(-1))
                 logprobs.append(loss)
             # ----- CASE use scheduled sampling

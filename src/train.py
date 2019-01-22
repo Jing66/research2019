@@ -28,9 +28,11 @@ class Trainer():
         self._ckpt = ckpt
 
 
-    def run_one_epoch(self, dataset, epoch, max_len):
+    def run_one_epoch(self, dataset, epoch):
         self._logger.info('=> Training epoch %d'%epoch)
-        data_iter = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'train',max_len)
+        data_iter = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'train',
+                            self._hparams['Model']['max_len'] , # upper bound of input sentence length
+                            self._hparams['Trainer']['total_samples'])  # total number of samples to train
         losses = 0
         for step, (data, data_lens) in enumerate(data_iter):
             # torch.cuda.empty_cache()
@@ -42,7 +44,6 @@ class Trainer():
                 X = X.cuda()
                 lens = lens.cuda()
             self._opt.zero_grad()
-            # pdb.set_trace()
             # y_pred = self._model(X, lens)         # X:[b,T], y_pred:[b,T, |V|]
             # loss = criterion(y_pred, X)
             loss = self._model(X, lens)
@@ -51,6 +52,12 @@ class Trainer():
 
             nn.utils.clip_grad_norm_(self._model.parameters(), 2)  # gradient clipping
             loss.backward()
+
+            # debug: print gradients
+            grad_of_param = {}
+            for name, parameter in self._model.named_parameters():
+                grad_of_param[name] = parameter.grad
+                self._logger.debug('gradient of %s: \n%s'%(name, str(parameter.grad)))
             self._opt.step()
         loss_per_epoch = losses/step
 
@@ -62,13 +69,12 @@ class Trainer():
 
 
     def train(self, savedir):
-        self._logger.info('Constructing model from data [%s] with hparams:\n%s...'\
-                %(self._data, json.dumps(self._hparams['Model'],indent=4)))
+        self._logger.info("Loading data from [%s]..." %(self._data))
         dataset = Dataset.load_ds(self._data)
-        self._logger.info("Dataset info: %s"%str(dataset))
-        T = self._hparams['Model']['max_len'] # upper bound of input length -- different batch can have different T
+        self._logger.info(str(dataset))
 
         # build model, loss, optimizer
+        self._logger.info("Constructing model with hparams:\n%s" %json.dumps(self._hparams['Model'],indent=4) )
         self.g = Graph( self._hparams['Model'], self._logger)
         vocab_cutoff = dataset.cutoff_vocab(self._hparams['Trainer']['vocab_clusters'])
         self._model = LM(dataset.vocab_sz, self._hparams['Model'], self.g, self._logger,vocab_cutoff )
@@ -105,14 +111,14 @@ class Trainer():
         self._logger.info('Start training with best_loss %6.4f, \nhparams:\n %s'%(best_loss, json.dumps(hparams['Trainer'], indent=4)))
         for epoch in range(start_epoch, start_epoch + self._hparams['Trainer']['epoch']):
             epoch_start = time.time()
-            loss_per_epoch = self.run_one_epoch(dataset, epoch, T)
+            loss_per_epoch = self.run_one_epoch(dataset, epoch)
             epoch_time = time.time() - epoch_start
             self._logger.info('epoch %d done, training time=[%s], training loss=[%6.4f]'%(epoch, str(timedelta(seconds=epoch_time)) , loss_per_epoch))
 
 
             # evaluate every epoch
             valid_start = time.time()
-            loss_per_validate = self.validate(dataset, T)
+            loss_per_validate = self.validate(dataset)
             valid_time = time.time() - valid_start
             self._logger.info('eval on epoch %d done, eval time=[%s], dev loss=%6.4f'%(epoch,str(timedelta(seconds=valid_time)), loss_per_validate))
 
@@ -124,10 +130,11 @@ class Trainer():
             
 
 
-    def validate(self, dataset, max_len):
+    def validate(self, dataset):
         self._logger.info("Start evaluating on dev set...")
         losses = 0
-        data_iter_eval = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'dev',max_len)
+        data_iter_eval = dataset.make_batch(self._hparams['Trainer']['batch_sz'],'dev',
+                            self._hparams['Model']['max_len'] ) # upper bound of input sentence length
         with torch.no_grad():
             for step, (data, data_lens) in enumerate(data_iter_eval):
                 d = torch.from_numpy(data).type(torch.LongTensor)
@@ -174,7 +181,7 @@ if __name__=="__main__":
                         help='path to data folder')
     parser.add_argument('-l', '--log_fname', default='train', 
                         help='generate logs in fname.log')
-    parser.add_argument('-s', '--save_dir', default='experiment/expr001', 
+    parser.add_argument('-s', '--save_dir', default='experiment/test', 
                         help='path to save trained model')
     parser.add_argument('--device',type=int, default=None)
     parser.add_argument('--seed', default=999, type=int, help="torch random seed")
@@ -196,11 +203,14 @@ if __name__=="__main__":
 
     torch.cuda.manual_seed(args.seed)
         
-    hparams = json.load(open(args.config,'r'))
     if args.resume:
         args.resume += "/" if args.resume[-1]!="/" else ""
         logger.info('Overriding hparams from %s/config.json...'%args.resume)
         hparams = json.load(open('%s/config.json'%args.resume,'r'))
+    else:
+        default_hparams = utils.default_hparams()
+        _hparams = json.load(open(args.config,'r'))
+        hparams = utils.update_dict(default_hparams,_hparams)
 
     trainer = Trainer( hparams,args.data_dir,args.resume, logger,args.device)
     trainer.train(args.save_dir) 

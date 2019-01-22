@@ -1,4 +1,6 @@
 import subprocess
+import json
+import collections
 import sys
 import gc
 from io import StringIO
@@ -6,6 +8,42 @@ import pandas as pd
 import numpy as np
 import torch
 import pdb
+
+def default_hparams():
+    '''return a set of default hyperparams'''
+    hparam_str = '''
+        {
+            "Trainer": {
+                "epoch": 50,
+                "lr": 1e-4,
+                "batch_sz": 100,
+                "optimizer": "SGD",
+                "total_samples": 8000000,
+                "vocab_clusters": 5
+            },
+            "Model": {
+                "max_len": 100,
+                "n_layers": 6,
+                "embd_sz": 300,
+                "dropout": 0.5,
+                "Graph": {
+                    "sparsity_fn": "leaky_relu",
+                    "kernel_sz": 7,
+                    "linear_feat": 100,
+                    "n_filter_k": 20,
+                    "n_filter_q": 20
+                },
+                "Feature": {
+                    "context_sz": 5,
+                    "compose_fn": "GRUCell",
+                    "SS_prob":0.0
+                }
+            }
+        }
+        '''
+    return json.loads(hparam_str)
+
+
 
 def get_free_gpu():
     '''return the idx and free memory of the most free GPU'''
@@ -43,3 +81,12 @@ def memReport():
             print(type(obj), obj.size())
             count+=1
     print("total", count)
+
+
+def update_dict(default, dict2):
+    for k, v in dict2.items():
+        if isinstance(v, collections.Mapping):
+            default[k] = update_dict(default.get(k, {}), v)
+        else:
+            default[k] = v
+    return default
