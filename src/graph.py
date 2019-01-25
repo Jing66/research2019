@@ -13,6 +13,7 @@ class Graph(nn.Module):
         self.layers = {}
         self.logger = logger
         self.build()
+        self.modules = nn.ModuleList(list(self.layers.values()))
 
 
     def build(self):
@@ -37,8 +38,6 @@ class Graph(nn.Module):
             self.layers['linear_k_%d'%l] = linear_k
             self.layers['linear_q_%d'%l] = linear_q
             self.graph_bias = b
-            self.modules = nn.ModuleList(list(self.layers.values()))
-
 
 
     def forward(self, x, mask):

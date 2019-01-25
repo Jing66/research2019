@@ -16,9 +16,9 @@ import pdb
 PAD = 0
 EOS = 1
 UNK = 2
-UNK_THRES = 20       # if a word appears <UNK_THRES times, make it UNK
+UNK_THRES = 10       # if a word appears <UNK_THRES times, make it UNK
 RATIO = [7.5,1.5,1]     # ratio of train/dev/test split
-SENT_THRES = 7      # if a sentence has < SNET_THRES words, ignore it
+SENT_THRES = 10      # if a sentence has < SNET_THRES words, ignore it
 
 
 def _pad_or_trunc(arr, size):

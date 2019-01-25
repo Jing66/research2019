@@ -8,6 +8,7 @@ import pandas as pd
 import numpy as np
 import torch
 import pdb
+import matplotlib.pyplot as plt
 
 def default_hparams():
     '''return a set of default hyperparams'''
@@ -19,6 +20,8 @@ def default_hparams():
                 "batch_sz": 100,
                 "optimizer": "SGD",
                 "total_samples": 8000000,
+                "save_period": 5,
+                "model_output": "loss",
                 "vocab_clusters": 5
             },
             "Model": {
@@ -84,9 +87,27 @@ def memReport():
 
 
 def update_dict(default, dict2):
+    '''update default dict with another dict'''
     for k, v in dict2.items():
         if isinstance(v, collections.Mapping):
             default[k] = update_dict(default.get(k, {}), v)
         else:
             default[k] = v
     return default
+
+
+def plot_train_dev_metrics(train_losses, dev_losses, metric_name,  fname=None):
+    train_losses, dev_losses = np.array(train_losses), np.array(dev_losses)
+    plt.plot(train_losses, 'r-', label='training '+metric_name)
+    plt.plot(dev_losses, 'b-', label='dev '+metric_name)
+    plt.ylabel(metric_name)
+    plt.xlabel('epoch')
+    plt.title(metric_name)
+    plt.legend(loc='upper right')
+    if fname:
+        plt.savefig(fname+'.png')
+    else:
+        plt.show()
+    plt.close()
+    
+

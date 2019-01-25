@@ -10,18 +10,29 @@ import pdb
 PAD = 0
 
 class LM(nn.Module):
-    def __init__(self, vocab_sz, hparams, graph_predictor, logger, vocab_cutoff=None,  embd_weights=None):
+    def __init__(self, vocab_sz, hparams, graph_predictor, logger, 
+                            vocab_cutoff=None,output_probs=True, embd_weights=None):
+        '''
+        Args:
+            - graph_predictor: class Graph()
+            - vocab_cutoff: list of elements as boundaries of clusters for the last layer, used in adaptiveLogSoftmax
+            - output_probs: bool. if True, model output log probs [b,(T-1)*D, |V|] instead of averaged loss (scalar). NOTE: output loss is much more efficient in both speed and memory, due to the use of `adaptiveLogSoftmax`
+            - embd_weights: np.ndarray. use pretrained embeddings
+        '''
         super(LM, self).__init__()
+        # setup configs
         self._hparams = hparams
         self.logger = logger
         self._V = vocab_sz
+        self.output_probs = output_probs           # build model blocks
         self.G = graph_predictor
         self.layers = {}
         self.build(vocab_cutoff)
         # if embedding weights are provided
         if embd_weights:
             self.layers['emb'].weight = nn.Parameter(embd_weights)
-        self.modules = nn.ModuleList(list(self.layers.values()))
+        self.blocks = nn.ModuleList(list(self.layers.values()))
+        self.apply(init_weights)
 
 
     def build(self, cutoffs):
@@ -82,7 +93,6 @@ class LM(nn.Module):
             # wgt_inputs[b,t,:] = sum_j{G[b,j,t])*f[b,j,:]}
             wgt_inputs = torch.transpose(G_l,1,2)@input_f           #(b,T,hidden)
             # if we use GRUCell, need to flatten inputs to [bxT, hidden] first...Linear layers does the flatten/unflatten for us
-            self.logger.debug('l=%d, wgt_inputs.shape=%s, input_f.shape=%s' %(l, str(wgt_inputs.shape),str(input_f.shape)))
             if self._hparams['Feature']['compose_fn']=='GRUCell':
                 wgt_inputs = wgt_inputs.view(-1,wgt_inputs.shape[-1])
                 input_f = input_f.view(-1,input_f.shape[-1])
@@ -124,12 +134,14 @@ class LM(nn.Module):
                 packed_output, _ = self.layers['decoder_rnn'](packed_input, torch.unsqueeze(h0_t,0).contiguous())      
                 output, _ = nn.utils.rnn.pad_packed_sequence(packed_output)     # [b,D,hidden]
                 output = output.transpose(0,1).contiguous().view((b-n_padding)*D,-1).contiguous()
-                # logprob = self.layers['decoder_remap'].log_prob(output).view((b-n_padding),D,-1)          #[b,D, |V|]
-                # logprob = F.pad(logprob, (0,0,0,0,0,n_padding))
-                # logprobs.append(logprob
+                if self.output_probs:
+                    logprob = self.layers['decoder_remap'].log_prob(output).view((b-n_padding),D,-1)          #[b,D, |V|]
+                    logprob = F.pad(logprob, (0,0,0,0,0,n_padding))
+                    logprobs.append(logprob)
+                else:
+                    _, loss = self.layers['decoder_remap'](output, x[:(b-n_padding),t:t+D].contiguous().view(-1))
+                    logprobs.append(loss) 
 
-                _, loss = self.layers['decoder_remap'](output, x[:(b-n_padding),t:t+D].contiguous().view(-1))
-                logprobs.append(loss)
             # ----- CASE use scheduled sampling
             else:
                 next_hidden = h0_t
@@ -159,6 +171,29 @@ class LM(nn.Module):
             
                 logprob = torch.stack(xhat_t,dim=1)    # [b,D,|V|]
                 logprobs.append(logprob)
-        # should output a tensor of [b,Dx(T-D+1),|V|]
-        # return torch.cat(logprobs,dim=1)
-        return sum(logprobs)/len(logprobs)
+        if self.output_probs:
+            # output a tensor of [b,Dx(T-D+1),|V|]
+            return torch.cat(logprobs,dim=1)
+        else:
+            return sum(logprobs)/len(logprobs)
+
+
+def init_weights(module):
+    '''weight initialization for the graph/LM model'''
+    if isinstance(module, nn.Linear):
+        nn.init.xavier_uniform_(module.weight.data)
+        if module.bias is not None: 
+            nn.init.constant_(module.bias.data, 0.0)
+    elif isinstance(module, nn.GRU):
+        nn.init.xavier_uniform_(module.weight_ih_l0.data)
+        nn.init.orthogonal_(module.weight_hh_l0.data)
+        nn.init.constant_(module.bias_ih_l0.data, 0.0)
+        nn.init.constant_(module.bias_hh_l0.data, 0.0)
+    elif isinstance(module, nn.GRUCell):
+        nn.init.xavier_uniform_(module.weight_ih.data)
+        nn.init.orthogonal_(module.weight_hh.data)
+        nn.init.constant_(module.bias_ih.data, 0.0)
+        nn.init.constant_(module.bias_hh.data, 0.0)
+    elif isinstance(module, nn.Conv1d):
+        nn.init.xavier_uniform_(module.weight.data) 
+
