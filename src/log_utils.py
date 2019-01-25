@@ -1,6 +1,7 @@
 import logging
 import sys
 import os
+import utils
 
 def get_logger(fname='', debug=True, dirname='./'):
     '''create logger in fname.log. '''
@@ -20,8 +21,7 @@ def get_logger(fname='', debug=True, dirname='./'):
     if len(fname)>0:
         if not os.path.exists(dirname):
             os.makedirs(dirname)
-        dirname += '/' if dirname[-1]!='/' else dirname
-        f_handler = logging.FileHandler('%s%s.log'%(dirname,fname),mode='w')
+        f_handler = logging.FileHandler('%s/%s.log'%(utils.format_dirname(dirname),fname),mode='w')
         f_handler.setFormatter(log_format)
         logger.addHandler(f_handler)
 

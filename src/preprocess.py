@@ -163,16 +163,19 @@ class Dataset():
         np.save('%s/w_freq'%d, self.w_freq)
 
     @classmethod
-    def load_ds(cls, d):
-        with open("%s/train.pkl"%d,'rb') as f:
-            serialized = f.read()
-        train = pickle.loads(serialized)
+    def load_ds(cls, d, test_only=False):
+        '''test_only: bool. If true, only load test dataset'''
+        train, dev = [],[]
+        if not test_only:
+            with open("%s/train.pkl"%d,'rb') as f:
+                serialized = f.read()
+            train = pickle.loads(serialized)
+            with open("%s/dev.pkl"%d,'rb') as f:
+                serialized = f.read()
+            dev = pickle.loads(serialized)
         with open("%s/test.pkl"%d,'rb') as f:
             serialized = f.read()
         test = pickle.loads(serialized)
-        with open("%s/dev.pkl"%d,'rb') as f:
-            serialized = f.read()
-        dev = pickle.loads(serialized)
         with open('%s/vocab.json'%d, "r") as read_file:
             vocab = json.load(read_file)
         w_freq = np.load('%s/w_freq.npy'%d)
@@ -203,7 +206,7 @@ class Dataset():
             sent = np.array(sent)
             n_unk += (sent==UNK).sum()
             tot += len(sent)
-        return n_unk/tot
+        return n_unk/tot if tot!=0 else 0.0
 
 
     def __str__(self):
@@ -220,9 +223,10 @@ class Dataset():
         s += '\nDataset sentence length info: max--%s, min--%s, mean--%s, median--%s'\
                 %(alllens.max(), alllens.min(), np.mean(alllens), np.median(alllens))
         tlens = alllens[:len(self._train)]
-        s += '\nTraining sentence length info: max--%s, min--%s, mean--%s, median--%s'\
-                %(tlens.max(), tlens.min(), np.mean(tlens), np.median(tlens))
-        s += '\n Training corpus #token :%d' %(np.sum(tlens))
+        if len(tlens)>0:
+            s += '\nTraining sentence length info: max--%s, min--%s, mean--%s, median--%s'\
+                    %(tlens.max(), tlens.min(), np.mean(tlens), np.median(tlens))
+            s += '\n Training corpus #token :%d' %(np.sum(tlens))
         return s
 
 

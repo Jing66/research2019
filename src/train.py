@@ -22,15 +22,63 @@ global logger
 
 
 class Trainer():
-    def __init__(self, config, datadir,ckpt, _logger=None, gpu=None):
+    def __init__(self, config, datadir,ckpt, _logger=None, gpu=None, test_only=False):
         self.config = config
-        self._data = datadir
         self.logger = _logger
         self._gpu = gpu
         self._ckpt = ckpt
+        self.build(datadir, test_only)
 
 
-    def run_one_epoch(self, dataset, epoch, output_probs):
+
+    def build(self, datadir, test_only=False):
+        self.logger.info("Loading data from [%s]..." %(datadir))
+        self.dataset = Dataset.load_ds(datadir, test_only)
+        self.logger.info(str(self.dataset))
+
+        # build model, loss, optimizer
+        self.logger.info("Constructing model with hparams:\n%s" %json.dumps(self.config['Model'],indent=4) )
+        self.g = Graph( self.config['Model'], self.logger)
+        vocab_cutoff = self.dataset.cutoff_vocab(self.config['Trainer']['vocab_clusters'])
+        output_probs = True if self.config['Trainer']['model_output'] == 'logprobs' else False
+        self._model = LM(self.dataset.vocab_sz, self.config['Model'], self.g, self.logger,vocab_cutoff, output_probs)
+        self.criterion = ContextLMLoss(self.config['Model']['Feature']['context_sz'], self.logger)
+        self.logger.info('Constructing optimizer: %s' %self.config['Trainer']['optimizer'])
+        optimizer = getattr(torch.optim, self.config['Trainer']['optimizer'])
+        self._opt = optimizer(self._model.parameters(),self.config['Trainer']['lr'])
+        params = [(name, p.shape) for name, p in self._model.named_parameters()]
+        self.logger.debug('Optimizing parameters: %s'%str(params))
+
+
+    def load_ckpt(self):
+        '''if there's checkpoint, return previous epoch and best loss'''
+        best_loss = np.inf
+        start_epoch = 0
+        if self._ckpt:
+            self.logger.info('Loading checkpoint from %s/exprt.ckpt...'%self._ckpt)
+            if self._gpu is None:
+                checkpoint = torch.load("%s/exprt.ckpt"%self._ckpt, map_location=lambda storage, loc: storage)
+            else:
+                checkpoint = torch.load("%s/exprt.ckpt"%self._ckpt)
+            start_epoch = checkpoint['epoch']
+            best_loss = checkpoint['loss']
+            self._model.load_state_dict(checkpoint['model'])
+            self._opt.load_state_dict(checkpoint['optimizer'])
+            self.logger.info("checkpoint experiment loaded, model trained until epoch %d, best_loss=%6.4f" %(start_epoch,best_loss))
+
+        if self._gpu is not None:
+            self.g.cuda()
+            self._model.cuda()
+            self.criterion.cuda()
+            for state in self._opt.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor):
+                        state[k] = v.cuda()
+        return start_epoch, best_loss
+
+
+
+    def run_one_epoch(self,  epoch, output_probs):
         '''
         Train one epoch of the whole dataset.
         Args:
@@ -38,7 +86,7 @@ class Trainer():
             - otuput_probs: if True, model output log probs, in which case we also calculate accuracy
         '''
         self.logger.info('=> Training epoch %d'%epoch)
-        data_iter = dataset.make_batch(self.config['Trainer']['batch_sz'],'train',
+        data_iter = self.dataset.make_batch(self.config['Trainer']['batch_sz'],'train',
                             self.config['Model']['max_len'] , # upper bound of input sentence length
                             self.config['Trainer']['total_samples'])  # total number of samples to train
         losses, accuracies = 0,0
@@ -85,53 +133,16 @@ class Trainer():
 
 
     def train(self, savedir):
-        self.logger.info("Loading data from [%s]..." %(self._data))
-        dataset = Dataset.load_ds(self._data)
-        self.logger.info(str(dataset))
-
-        # build model, loss, optimizer
-        self.logger.info("Constructing model with hparams:\n%s" %json.dumps(self.config['Model'],indent=4) )
-        self.g = Graph( self.config['Model'], self.logger)
-        vocab_cutoff = dataset.cutoff_vocab(self.config['Trainer']['vocab_clusters'])
-        output_probs = True if self.config['Trainer']['model_output'] == 'logprobs' else False
-        self._model = LM(dataset.vocab_sz, self.config['Model'], self.g, self.logger,vocab_cutoff, output_probs)
-        self.criterion = ContextLMLoss(self.config['Model']['Feature']['context_sz'], self.logger)
-        self.logger.info('Constructing optimizer: %s' %self.config['Trainer']['optimizer'])
-        optimizer = getattr(torch.optim, self.config['Trainer']['optimizer'])
-        self._opt = optimizer(self._model.parameters(),self.config['Trainer']['lr'])
-        params = [(name, p.shape) for name, p in self._model.named_parameters()]
-        self.logger.debug('Optimizing parameters: %s'%str(params))
-        start_epoch = 0
-        best_loss = np.inf
-        # if there's checkpoint
-        if self._ckpt:
-            logger.info('Loading checkpoint from %sexprt.ckpt...'%self._ckpt)
-            if self._gpu is None:
-                checkpoint = torch.load("%s/exprt.ckpt"%self._ckpt, map_location=lambda storage, loc: storage)
-            else:
-                checkpoint = torch.load("%s/exprt.ckpt"%self._ckpt)
-            start_epoch = checkpoint['epoch']
-            best_loss = checkpoint['loss']
-            self._model.load_state_dict(checkpoint['model'])
-            self._opt.load_state_dict(checkpoint['optimizer'])
-            self.logger.info("checkpoint experiment loaded")
-
-        if self._gpu is not None:
-            self.g.cuda()
-            self._model.cuda()
-            self.criterion.cuda()
-            for state in self._opt.state.values():
-                for k, v in state.items():
-                    if isinstance(v, torch.Tensor):
-                        state[k] = v.cuda()
         # training steps
+        start_epoch, best_loss = self.load_ckpt()
         save_period = self.config['Trainer']['save_period']
+        output_probs = True if self.config['Trainer']['model_output'] == 'logprobs' else False
         train_losses, dev_losses, train_accs, dev_accs  = [], [], [], []
         self.logger.info('Start training with best_loss %6.4f, \nhparams:\n %s'%(best_loss, json.dumps(hparams['Trainer'], indent=4)))
         for epoch in range(start_epoch, start_epoch + self.config['Trainer']['epoch']):
             # train one epoch, forward and backward on whole dataset
             epoch_start = time.time()
-            loss_per_epoch, accuracies_per_epoch  = self.run_one_epoch(dataset, epoch, output_probs)
+            loss_per_epoch, accuracies_per_epoch  = self.run_one_epoch( epoch, output_probs)
             epoch_time = time.time() - epoch_start
             self.logger.info('epoch %d done, training time=[%s], training loss=[%6.4f], training accuracy = %6.3f'%(epoch, str(timedelta(seconds=epoch_time)) , loss_per_epoch, accuracies_per_epoch))
             train_losses.append(loss_per_epoch)
@@ -140,16 +151,16 @@ class Trainer():
 
             # evaluate every epoch
             valid_start = time.time()
-            loss_per_validate, accuracy_per_validate  = self.validate(dataset, output_probs)
+            loss_per_validate, accuracy_per_validate  = self.validate(output_probs)
             valid_time = time.time() - valid_start
-            self.logger.info('eval on epoch %d done, eval time=[%s], dev loss=%6.4f, dev accuracy = %6.4f'%(epoch,str(timedelta(seconds=valid_time)), loss_per_validate, accuracy_per_validate))
+            self.logger.info('validation on epoch %d done, eval time=[%s], dev loss=%6.4f, dev accuracy = %6.4f'%(epoch,str(timedelta(seconds=valid_time)), loss_per_validate, accuracy_per_validate))
             dev_losses.append(loss_per_validate)
             dev_accs.append(accuracy_per_validate)
 
             # save best model on dev set
             if loss_per_validate < best_loss:
                 best_loss = loss_per_validate
-                self.save(savedir, best_loss, epoch)
+                self.save('%s/best'%savedir, best_loss, epoch)
                 self.logger.info('>>New best validation loss: %s. Model saved into %s/exprt.ckpt'%(best_loss, savedir))
             if epoch % save_period ==0:
                 self.save("%s/ckpt_%d"%(savedir, epoch), best_loss, epoch)
@@ -162,10 +173,10 @@ class Trainer():
         self.logger.info('==> Training Done!! best validation loss: %6.4f. Model/log/plots saved in [%s]' %(best_loss, savedir))
 
 
-    def validate(self, dataset, output_probs):
-        self.logger.info("Start evaluating on dev set...")
+    def validate(self,  output_probs, ds_name='dev'):
+        self.logger.info("Start evaluating on %s set..." %ds_name)
         losses, accuracies = 0, 0
-        data_iter_eval = dataset.make_batch(self.config['Trainer']['batch_sz'],'dev',
+        data_iter_eval = self.dataset.make_batch(self.config['Trainer']['batch_sz'],ds_name,
                             self.config['Model']['max_len'] ) # upper bound of input sentence length
         with torch.no_grad():
             for step, (data, data_lens) in enumerate(data_iter_eval):
@@ -215,7 +226,7 @@ if __name__=="__main__":
                         help='path to config file, default ./experiment/toy_config.json')
     parser.add_argument('-r', '--resume', default=None, type=str, 
                         help='path to last checkpoint model')
-    parser.add_argument('-d', '--data_dir', default='data/out', 
+    parser.add_argument('-d', '--data_dir', default='data/toy', 
                         help='path to data folder')
     parser.add_argument('-l', '--log_fname', default='train', 
                         help='generate logs in fname.log')
@@ -227,7 +238,7 @@ if __name__=="__main__":
     parser.add_argument('--debug', dest='debug', default=False, action='store_true')
 
     args = parser.parse_args()
-
+    # setup logger, seed, gpu etc
     logger = get_logger(args.log_fname, args.debug, args.save_dir)
     logger.info("Setting pytorch/numpy random seed to %s"%args.seed)
     torch.manual_seed(args.seed)
@@ -238,18 +249,18 @@ if __name__=="__main__":
             args.device = free_gpu
     os.environ["CUDA_VISIBLE_DEVICES"] = str(args.device)
     logger.info("Using free GPU: %s"%args.device)
-
-    torch.cuda.manual_seed(args.seed)
+    if args.device is not None:
+        torch.cuda.manual_seed(args.seed)
         
+    # overwrite config files from checkpoint
     if args.resume:
-        args.resume += "/" if args.resume[-1]!="/" else ""
-        logger.info('Overriding hparams from %s/config.json...'%args.resume)
-        hparams = json.load(open('%s/config.json'%args.resume,'r'))
+        logger.info('Overriding hparams from %s/config.json...'%utils.format_dirname(args.resume))
+        _hparams = json.load(open('%s/config.json'%utils.format_dirname(args.resume),'r'))
     else:
-        default_hparams = utils.default_hparams()
         _hparams = json.load(open(args.config,'r'))
-        hparams = utils.update_dict(default_hparams,_hparams)
+    default_hparams = utils.default_hparams()
+    hparams = utils.update_dict(default_hparams,_hparams)
 
-    trainer = Trainer( hparams,args.data_dir,args.resume, logger,args.device)
+    trainer = Trainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.resume),logger,args.device)
     trainer.train(args.save_dir) 
 

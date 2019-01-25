@@ -85,6 +85,12 @@ def memReport():
             count+=1
     print("total", count)
 
+def format_dirname(dirname):
+    '''return dirname as a string ending without "/"'''
+    if dirname[-1]!='/':
+        return dirname
+    else:
+        return dirname[:-1]
 
 def update_dict(default, dict2):
     '''update default dict with another dict'''
