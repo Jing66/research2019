@@ -11,12 +11,11 @@ PAD = 0
 
 class LM(nn.Module):
     def __init__(self, vocab_sz, hparams, graph_predictor, logger, 
-                            vocab_cutoff=None,output_probs=True, embd_weights=None):
+                            vocab_cutoff=None, embd_weights=None):
         '''
         Args:
             - graph_predictor: class Graph()
             - vocab_cutoff: list of elements as boundaries of clusters for the last layer, used in adaptiveLogSoftmax
-            - output_probs: bool. if True, model output log probs [b,(T-1)*D, |V|] instead of averaged loss (scalar). NOTE: output loss is much more efficient in both speed and memory, due to the use of `adaptiveLogSoftmax`
             - embd_weights: np.ndarray. use pretrained embeddings
         '''
         super(LM, self).__init__()
@@ -24,7 +23,6 @@ class LM(nn.Module):
         self._hparams = hparams
         self.logger = logger
         self._V = vocab_sz
-        self.output_probs = output_probs           # build model blocks
         self.G = graph_predictor
         self.layers = {}
         self.build(vocab_cutoff)
@@ -63,11 +61,11 @@ class LM(nn.Module):
 
 
 
-    def forward(self, x, lengths):
+    def forward(self, x, lengths, output_probs=False):
         '''
-        args:
-            x: [b,T] 
-            lengths: [b,]
+        Args:
+            - x: [b,T] 
+            - output_probs: bool. if True, model output log probs [b,(T-1)*D, |V|] instead of averaged loss (scalar). NOTE: output loss is much more efficient in both speed and memory, due to the use of `adaptiveLogSoftmax`
         return:
             out: Tensor [b, Dx(T-D),|V|], where 
                 out[:,0:D,|V|]= decoder(<EOS>), 
@@ -134,7 +132,7 @@ class LM(nn.Module):
                 packed_output, _ = self.layers['decoder_rnn'](packed_input, torch.unsqueeze(h0_t,0).contiguous())      
                 output, _ = nn.utils.rnn.pad_packed_sequence(packed_output)     # [b,D,hidden]
                 output = output.transpose(0,1).contiguous().view((b-n_padding)*D,-1).contiguous()
-                if self.output_probs:
+                if output_probs:
                     logprob = self.layers['decoder_remap'].log_prob(output).view((b-n_padding),D,-1)          #[b,D, |V|]
                     logprob = F.pad(logprob, (0,0,0,0,0,n_padding))
                     logprobs.append(logprob)
@@ -171,7 +169,7 @@ class LM(nn.Module):
             
                 logprob = torch.stack(xhat_t,dim=1)    # [b,D,|V|]
                 logprobs.append(logprob)
-        if self.output_probs:
+        if output_probs:
             # output a tensor of [b,Dx(T-D+1),|V|]
             return torch.cat(logprobs,dim=1)
         else:

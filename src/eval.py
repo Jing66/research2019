@@ -46,6 +46,6 @@ if __name__=="__main__":
                 logger,args.device, test_only=True)
     trainer.load_ckpt()
     start = time.time() 
-    loss, accuracy = trainer.validate(True, 'test')
+    loss, accuracy = trainer.validate('test')
     test_time = time.time() - start
     logger.info('=> Evaluation done! test time=[%s], loss=%6.4f, accuracy=%6.4f'%(str(timedelta(seconds=test_time)),loss, accuracy))

@@ -7,8 +7,10 @@ from io import StringIO
 import pandas as pd
 import numpy as np
 import torch
+import re
 import pdb
 import matplotlib.pyplot as plt
+import argparse
 
 def default_hparams():
     '''return a set of default hyperparams'''
@@ -16,8 +18,9 @@ def default_hparams():
         {
             "Trainer": {
                 "epoch": 50,
-                "lr": 1e-4,
-                "batch_sz": 100,
+                "lr": 0.005,
+                "train_batch_sz": 200,
+                "eval_batch_sz": 50,
                 "optimizer": "SGD",
                 "total_samples": 8000000,
                 "save_period": 5,
@@ -87,6 +90,8 @@ def memReport():
 
 def format_dirname(dirname):
     '''return dirname as a string ending without "/"'''
+    if dirname is None:
+        return dirname
     if dirname[-1]!='/':
         return dirname
     else:
@@ -117,3 +122,48 @@ def plot_train_dev_metrics(train_losses, dev_losses, metric_name,  fname=None):
     plt.close()
     
 
+
+def parse_logs(fnames):
+    '''return train/dev losses/accuracy from a list of files'''
+    train_losses, dev_losses = {}, {}
+    train_accuracy, dev_accuracy = {},{}
+    for fname in fnames:
+        with open(fname, 'r') as f:
+            for line in f:
+                epoch = re.search(r'epoch \d+ done',line)
+                if epoch:
+                    nb_epoch = int(epoch.group().split()[1])
+                    if re.search(r'training', line):
+                        isTrain = True
+                    elif re.search(r'validation',line):
+                        isTrain = False
+                    loss_str=re.findall(r'loss=[0-9].[0-9]+',line)
+                    if len(loss_str)>0:
+                        loss = float(loss_str[0].split('=')[-1])
+                    acc_str = re.findall(r'accuracy =\s+[0-9].[0-9]+',line)
+                    if len(acc_str)>0:
+                        accuracy = float(acc_str[0].split('=')[-1].strip())
+                    if isTrain:
+                        train_losses[nb_epoch] = loss
+                        train_accuracy[nb_epoch] = accuracy
+                    else:
+                        dev_losses[nb_epoch] = loss
+    def _sort_by_key(dicts):
+        return [dicts[k] for k in sorted(dicts.keys())]
+    return _sort_by_key(train_losses), _sort_by_key(train_accuracy), _sort_by_key(dev_losses), _sort_by_key(dev_accuracy)
+
+if __name__=='__main__':
+    # parse log files and plot metrics
+    parser = argparse.ArgumentParser(description='Plot metrics from log files')
+    parser.add_argument('log_files', nargs='+',help='path to log files')
+    parser.add_argument('-s', '--save_dir', default='./', 
+                        help='directory of the saved plot')
+    parser.add_argument('--loss', default=False,action='store_true', help='plot loss graph')
+    parser.add_argument('--acc', default=False, action='store_true', help='plot accuracy graph')
+    args = parser.parse_args()
+
+    t_l, t_a, d_l, d_a = parse_logs(args.log_files)
+    if args.loss:
+        plot_train_dev_metrics(t_l, d_l, 'loss', format_dirname(args.save_dir)+'/loss')
+    if args.acc:
+        plot_train_dev_metrics(t_a, d_a, 'Accuracy', format_dirname(args.save_dir)+'/accuracy')

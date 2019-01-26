@@ -41,7 +41,7 @@ class Trainer():
         self.g = Graph( self.config['Model'], self.logger)
         vocab_cutoff = self.dataset.cutoff_vocab(self.config['Trainer']['vocab_clusters'])
         output_probs = True if self.config['Trainer']['model_output'] == 'logprobs' else False
-        self._model = LM(self.dataset.vocab_sz, self.config['Model'], self.g, self.logger,vocab_cutoff, output_probs)
+        self._model = LM(self.dataset.vocab_sz, self.config['Model'], self.g, self.logger,vocab_cutoff)
         self.criterion = ContextLMLoss(self.config['Model']['Feature']['context_sz'], self.logger)
         self.logger.info('Constructing optimizer: %s' %self.config['Trainer']['optimizer'])
         optimizer = getattr(torch.optim, self.config['Trainer']['optimizer'])
@@ -86,7 +86,7 @@ class Trainer():
             - otuput_probs: if True, model output log probs, in which case we also calculate accuracy
         '''
         self.logger.info('=> Training epoch %d'%epoch)
-        data_iter = self.dataset.make_batch(self.config['Trainer']['batch_sz'],'train',
+        data_iter = self.dataset.make_batch(self.config['Trainer']['train_batch_sz'],'train',
                             self.config['Model']['max_len'] , # upper bound of input sentence length
                             self.config['Trainer']['total_samples'])  # total number of samples to train
         losses, accuracies = 0,0
@@ -102,12 +102,12 @@ class Trainer():
             self._opt.zero_grad()
 
             if output_probs:
-                y_pred = self._model(X, lens)         # X:[b,T], y_pred:[b,T*D,|V|]
+                y_pred = self._model(X, lens, output_probs)         # X:[b,T], y_pred:[b,T*D,|V|]
                 loss = self.criterion(y_pred, X)
                 acc = self.criterion.accuracy(y_pred, X)
                 accuracies += acc
             else:
-                loss = self._model(X, lens)
+                loss = self._model(X, lens, output_probs)
 
             self.logger.debug('loss per batch = %f'%loss)
             losses+=loss.detach().cpu().item()
@@ -144,14 +144,14 @@ class Trainer():
             epoch_start = time.time()
             loss_per_epoch, accuracies_per_epoch  = self.run_one_epoch( epoch, output_probs)
             epoch_time = time.time() - epoch_start
-            self.logger.info('epoch %d done, training time=[%s], training loss=[%6.4f], training accuracy = %6.3f'%(epoch, str(timedelta(seconds=epoch_time)) , loss_per_epoch, accuracies_per_epoch))
+            self.logger.info('epoch %d done, training time=[%s], training loss=%6.4f, training accuracy = %6.3f'%(epoch, str(timedelta(seconds=epoch_time)) , loss_per_epoch, accuracies_per_epoch))
             train_losses.append(loss_per_epoch)
             train_accs.append(accuracies_per_epoch)
 
 
             # evaluate every epoch
             valid_start = time.time()
-            loss_per_validate, accuracy_per_validate  = self.validate(output_probs)
+            loss_per_validate, accuracy_per_validate  = self.validate()
             valid_time = time.time() - valid_start
             self.logger.info('validation on epoch %d done, eval time=[%s], dev loss=%6.4f, dev accuracy = %6.4f'%(epoch,str(timedelta(seconds=valid_time)), loss_per_validate, accuracy_per_validate))
             dev_losses.append(loss_per_validate)
@@ -173,10 +173,10 @@ class Trainer():
         self.logger.info('==> Training Done!! best validation loss: %6.4f. Model/log/plots saved in [%s]' %(best_loss, savedir))
 
 
-    def validate(self,  output_probs, ds_name='dev'):
+    def validate(self,  ds_name='dev'):
         self.logger.info("Start evaluating on %s set..." %ds_name)
         losses, accuracies = 0, 0
-        data_iter_eval = self.dataset.make_batch(self.config['Trainer']['batch_sz'],ds_name,
+        data_iter_eval = self.dataset.make_batch(self.config['Trainer']['eval_batch_sz'],ds_name,
                             self.config['Model']['max_len'] ) # upper bound of input sentence length
         with torch.no_grad():
             for step, (data, data_lens) in enumerate(data_iter_eval):
@@ -188,13 +188,10 @@ class Trainer():
                     X = X.cuda()
                     lens = lens.cuda()
 
-                if output_probs:
-                    y_pred = self._model(X, lens)
-                    loss = self.criterion(y_pred, X)
-                    acc = self.criterion.accuracy(y_pred,X)
-                    accuracies += acc
-                else:
-                    loss = self._model(X, lens)
+                y_pred = self._model(X, lens, True)
+                loss = self.criterion(y_pred, X)
+                acc = self.criterion.accuracy(y_pred,X)
+                accuracies += acc
 
                 losses += loss.detach().cpu().item()
         loss_per_epoch = losses/(step+1)
@@ -221,7 +218,7 @@ class Trainer():
 
 
 if __name__=="__main__":
-    parser = argparse.ArgumentParser(description='Process some integers.')
+    parser = argparse.ArgumentParser(description='Train a model')
     parser.add_argument('-c','--config', default='./experiment/toy_config.json',
                         help='path to config file, default ./experiment/toy_config.json')
     parser.add_argument('-r', '--resume', default=None, type=str, 
