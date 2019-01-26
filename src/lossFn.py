@@ -30,14 +30,17 @@ class ContextLMLoss(nn.Module):
             losses.append(l)
         return sum(losses)/len(losses)
 
+    @torch.no_grad() 
     def accuracy(self, logprobs, X):
         _, Xhat = torch.max(logprobs, dim=2)
         T = X.shape[1]            # NOTE: X[:,-1] is <EOS>
         D = self.D
         tot_correct = 0
+        tot_valids = 0
         for t in range(T-D+1):
+            valids = (X[:,t:t+D]!=PAD)
             Xhat_t = Xhat[:, t*D:(t+1)*D]
-            # pdb.set_trace()
-            num_correct = torch.sum(X[:, t:t+D] == Xhat_t)
-            tot_correct += num_correct.detach().item()
-        return tot_correct/(Xhat.shape[0] * Xhat.shape[1])
+            num_correct = torch.sum(X[:, t:t+D][valids] == Xhat_t[valids])
+            tot_correct += num_correct.detach().cpu().item()
+            tot_valids += torch.sum(valids)
+        return tot_correct/(tot_valids)

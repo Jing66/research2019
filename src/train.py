@@ -87,11 +87,10 @@ class Trainer():
         '''
         self.logger.info('=> Training epoch %d'%epoch)
         data_iter = self.dataset.make_batch(self.config['Trainer']['train_batch_sz'],'train',
-                            self.config['Model']['max_len'] , # upper bound of input sentence length
-                            self.config['Trainer']['total_samples'])  # total number of samples to train
+                        max_len=self.config['Model']['max_len'] , # upper bound of input sentence length
+                        max_sample=self.config['Trainer']['total_samples'])  # total number of samples to train
         losses, accuracies = 0,0
         for step, (data, data_lens) in enumerate(data_iter):
-            # torch.cuda.empty_cache()
             data = torch.from_numpy(data).type(torch.LongTensor)
             data_lens = torch.from_numpy(data_lens).type(torch.LongTensor)
             X = torch.autograd.Variable(data, requires_grad=False)
@@ -177,7 +176,7 @@ class Trainer():
         self.logger.info("Start evaluating on %s set..." %ds_name)
         losses, accuracies = 0, 0
         data_iter_eval = self.dataset.make_batch(self.config['Trainer']['eval_batch_sz'],ds_name,
-                            self.config['Model']['max_len'] ) # upper bound of input sentence length
+                            max_len=self.config['Model']['max_len'] ) # upper bound of input sentence length
         with torch.no_grad():
             for step, (data, data_lens) in enumerate(data_iter_eval):
                 d = torch.from_numpy(data).type(torch.LongTensor)
@@ -188,9 +187,10 @@ class Trainer():
                     X = X.cuda()
                     lens = lens.cuda()
 
+                pdb.set_trace()
                 y_pred = self._model(X, lens, True)
                 loss = self.criterion(y_pred, X)
-                acc = self.criterion.accuracy(y_pred,X)
+                acc =  self.criterion.accuracy(y_pred,X)
                 accuracies += acc
 
                 losses += loss.detach().cpu().item()
