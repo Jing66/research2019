@@ -30,14 +30,14 @@ class Graph(nn.Module):
             linear_k = nn.Linear(k_conv.out_channels, nb_lin_feat)
             linear_q = nn.Linear(q_conv.out_channels, nb_lin_feat)
 
-            # b = nn.Parameters(torch.randn(self._T, self._T)) # bias term
-            b = nn.Parameter(torch.zeros(1))
             # collect layers
             self.layers['k_conv_%d'%l] = k_conv
             self.layers['q_conv_%d'%l] = q_conv
             self.layers['linear_k_%d'%l] = linear_k
             self.layers['linear_q_%d'%l] = linear_q
-            self.graph_bias = b
+        # b = nn.Parameters(torch.randn(self._T, self._T)) # bias term
+        b = nn.Parameter(torch.zeros(self._hparams['n_layers']))
+        self.graph_bias = b
 
 
     def forward(self, x, mask):
@@ -53,7 +53,7 @@ class Graph(nn.Module):
             qi = self.layers['q_conv_%d'%l](x)                  # (b, n_filters, T)
             kl = self.layers['linear_k_%d'%l](torch.transpose(ki,1,2))
             ql = self.layers['linear_q_%d'%l](torch.transpose(qi,1,2))      # (b,T,n_linear_feat)
-            bias = self.graph_bias
+            bias = self.graph_bias[l]
             # this computes: G_l[b,i,j] = [RELU(dot(kl[b,i,:],ql[b,j,:]+b)]^2
             sparse_fn = getattr(F, self._hparams['Graph']['sparsity_fn'])
             G_l_unnorm = (sparse_fn(kl@torch.transpose(ql,1,2)+bias))**2       # (b,T,T)

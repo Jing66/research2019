@@ -148,6 +148,7 @@ def parse_logs(fnames):
                         train_accuracy[nb_epoch] = accuracy
                     else:
                         dev_losses[nb_epoch] = loss
+                        dev_accuracy[nb_epoch] = accuracy
     def _sort_by_key(dicts):
         return [dicts[k] for k in sorted(dicts.keys())]
     return _sort_by_key(train_losses), _sort_by_key(train_accuracy), _sort_by_key(dev_losses), _sort_by_key(dev_accuracy)
