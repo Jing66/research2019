@@ -187,12 +187,11 @@ class Trainer():
                     X = X.cuda()
                     lens = lens.cuda()
 
-                pdb.set_trace()
                 y_pred = self._model(X, lens, True)
                 loss = self.criterion(y_pred, X)
                 acc =  self.criterion.accuracy(y_pred,X)
                 accuracies += acc
-
+                del y_pred
                 losses += loss.detach().cpu().item()
         loss_per_epoch = losses/(step+1)
         return loss_per_epoch, accuracies/(step+1)

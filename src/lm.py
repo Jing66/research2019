@@ -82,9 +82,10 @@ class LM(nn.Module):
         mask = utils.get_mask_3d(x)       # (b,T,T)
         if is_cuda:
             mask = mask.cuda()
-        embedded = input_f
+        embedded = input_f.clone()
         # compute graph affinity matrix
         G = self.G(embedded, mask)                #(b,L,T,T)
+        # pdb.set_trace()
 
         for l in range(1, self._hparams['n_layers']+1):
             G_l = G[:,l-1,:,:]  #(b,T,T)
@@ -111,7 +112,7 @@ class LM(nn.Module):
             '''select only non-padding batch into RNN. return number of samples excluded
             '''
             n_padding = torch.sum(lens<=timestep)
-            return n_padding
+            return n_padding.detach().item()
 
         for t in range(T-D+1):
             h0_t = input_f[:,t,: ]                # init h0 of decoder at t: f_t (b,hidden_sz)
@@ -169,6 +170,7 @@ class LM(nn.Module):
             
                 logprob = torch.stack(xhat_t,dim=1)    # [b,D,|V|]
                 logprobs.append(logprob)
+        # pdb.set_trace()
         if output_probs:
             # output a tensor of [b,Dx(T-D+1),|V|]
             return torch.cat(logprobs,dim=1)

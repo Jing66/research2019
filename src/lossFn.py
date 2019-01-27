@@ -42,5 +42,5 @@ class ContextLMLoss(nn.Module):
             Xhat_t = Xhat[:, t*D:(t+1)*D]
             num_correct = torch.sum(X[:, t:t+D][valids] == Xhat_t[valids])
             tot_correct += num_correct.detach().cpu().item()
-            tot_valids += torch.sum(valids)
+            tot_valids += torch.sum(valids).detach().cpu().item()
         return tot_correct/(tot_valids)
