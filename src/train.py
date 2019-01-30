@@ -163,7 +163,7 @@ class Trainer():
             if loss_per_validate < best_loss:
                 best_loss = loss_per_validate
                 self.save('%s/best'%savedir, best_loss, epoch)
-                self.logger.info('>>New best validation loss: %s. Model saved into %s/exprt.ckpt'%(best_loss, savedir))
+                self.logger.info('>>New best validation loss: %s. Model saved into %s/best/'%(best_loss, savedir))
                 
             
         # Done -- plot graphs

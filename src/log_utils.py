@@ -2,6 +2,8 @@ import logging
 import sys
 import os
 import utils
+import subprocess
+
 
 def get_logger(fname='', debug=True, dirname='./'):
     '''create logger in fname.log. '''
@@ -26,4 +28,11 @@ def get_logger(fname='', debug=True, dirname='./'):
         logger.addHandler(f_handler)
 
     logger.addHandler(c_handler)
+    logger.info("Running code version: [%s]" %get_git_revision_short_hash())
     return logger
+
+
+
+def get_git_revision_short_hash():
+    version = subprocess.check_output(['git', 'rev-parse', '--short', 'HEAD'])
+    return version.decode('utf-8')
