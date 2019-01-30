@@ -128,7 +128,7 @@ class LM(nn.Module):
                 _tmp = torch.tensor([D]).type(torch.LongTensor)
                 if is_cuda:
                     _tmp = _tmp.cuda()
-                lens = torch.min(lengths[:(b-n_padding)]-t, _tmp.expand(inputs.shape[0]))
+                lens = torch.min(lengths[:(b-n_padding)]-t, _tmp.expand(inputs.shape[0])).detach()
                 packed_input = nn.utils.rnn.pack_padded_sequence(inputs, lens, batch_first=True)
                 packed_output, _ = self.layers['decoder_rnn'](packed_input, torch.unsqueeze(h0_t,0).contiguous())      
                 output, _ = nn.utils.rnn.pad_packed_sequence(packed_output)     # [b,D,hidden]

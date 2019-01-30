@@ -22,7 +22,7 @@ def default_hparams():
                 "train_batch_sz": 200,
                 "eval_batch_sz": 50,
                 "optimizer": "SGD",
-                "total_samples": 8000000,
+                "total_samples": 10000000,
                 "save_period": 5,
                 "model_output": "loss",
                 "vocab_clusters": 5

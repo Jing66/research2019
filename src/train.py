@@ -147,6 +147,9 @@ class Trainer():
             train_losses.append(loss_per_epoch)
             train_accs.append(accuracies_per_epoch)
 
+            # save periodically
+            if epoch % save_period ==0:
+                self.save("%s/ckpt_%d"%(savedir, epoch), best_loss, epoch)
 
             # evaluate every epoch
             valid_start = time.time()
@@ -161,8 +164,6 @@ class Trainer():
                 best_loss = loss_per_validate
                 self.save('%s/best'%savedir, best_loss, epoch)
                 self.logger.info('>>New best validation loss: %s. Model saved into %s/exprt.ckpt'%(best_loss, savedir))
-            if epoch % save_period ==0:
-                self.save("%s/ckpt_%d"%(savedir, epoch), best_loss, epoch)
                 
             
         # Done -- plot graphs
