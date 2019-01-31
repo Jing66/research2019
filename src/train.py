@@ -11,6 +11,7 @@ from datetime import timedelta
 import pdb
 
 from preprocess import Dataset
+from dataloader import get_data_loader 
 from lm import LM
 from graph import Graph
 import utils
@@ -86,13 +87,12 @@ class Trainer():
             - otuput_probs: if True, model output log probs, in which case we also calculate accuracy
         '''
         self.logger.info('=> Training epoch %d'%epoch)
-        data_iter = self.dataset.make_batch(self.config['Trainer']['train_batch_sz'],'train',
+        data_iter = get_data_loader(self.dataset,"train", self.config['Trainer']['train_batch_sz'],
                         max_len=self.config['Model']['max_len'] , # upper bound of input sentence length
-                        max_sample=self.config['Trainer']['total_samples'])  # total number of samples to train
+                        max_sample=self.config['Trainer']['total_samples'],  # total number of samples to train
+                        n_workers=self.config['Trainer']['n_workers'])
         losses, accuracies = 0,0
         for step, (data, data_lens) in enumerate(data_iter):
-            data = torch.from_numpy(data).type(torch.LongTensor)
-            data_lens = torch.from_numpy(data_lens).type(torch.LongTensor)
             X = torch.autograd.Variable(data, requires_grad=False)
             lens = torch.autograd.Variable(data_lens, requires_grad=False)
             if self._gpu is not None:
@@ -176,14 +176,13 @@ class Trainer():
     def validate(self,  ds_name='dev'):
         self.logger.info("Start evaluating on %s set..." %ds_name)
         losses, accuracies = 0, 0
-        data_iter_eval = self.dataset.make_batch(self.config['Trainer']['eval_batch_sz'],ds_name,
-                            max_len=self.config['Model']['max_len'] ) # upper bound of input sentence length
+        data_iter_eval = get_data_loader(self.dataset, ds_name, self.config['Trainer']['eval_batch_sz'],
+                            max_len=self.config['Model']['max_len'], # upper bound of input sentence length
+                            n_workers=self.config['Trainer']['n_workers'])
         with torch.no_grad():
             for step, (data, data_lens) in enumerate(data_iter_eval):
-                d = torch.from_numpy(data).type(torch.LongTensor)
-                l = torch.from_numpy(data_lens).type(torch.LongTensor)
-                X= torch.autograd.Variable(d, requires_grad=False)
-                lens = torch.autograd.Variable(l, requires_grad=False)
+                X= torch.autograd.Variable(data, requires_grad=False)
+                lens = torch.autograd.Variable(data_lens, requires_grad=False)
                 if self._gpu is  not None:
                     X = X.cuda()
                     lens = lens.cuda()

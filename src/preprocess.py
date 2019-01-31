@@ -8,6 +8,9 @@ import argparse
 import itertools
 import matplotlib.pyplot as plt
 from scipy import stats
+import torch.utils.data as data
+import torch
+
 
 from log_utils import  get_logger
 global logger
@@ -38,7 +41,7 @@ def normalize_str(s):
     return s
 
 
-class Dataset():
+class Dataset(data.Dataset):
     def __init__(self, train=[], dev=[], test=[] ,vocab={'PAD':PAD, 'EOS':EOS,'UNK':UNK}, w_freq=None):
         self._train = train
         self._test = test
@@ -55,14 +58,21 @@ class Dataset():
     def vocab_sz(self):
         return len(self._vocab)
 
+
+    def __len__(self):
+        return len(self._train)+len(self._dev)+len(self._test)
+
+    def __getitem__(self, index):
+        sents = self._train + self._dev + self._test
+        seq =  sents[index]
+        sequence = torch.Tensor(seq).long()
+        return sequence
+
+
     def max_len(self, upper):
         ''' return the length of longest sentence in dataset that is lower than upper'''
         slens = np.array([len(s) for s in self._train])
         return min(upper, slens.max())
-
-    def __len__(self):
-        return len(self._train)
-
 
     @classmethod
     def load_save_docs(cls, in_files, out_dir):
@@ -229,10 +239,6 @@ class Dataset():
             s += '\n Training corpus #token :%d' %(np.sum(tlens))
         return s
 
-
-    def __getitem__(self, index):
-        return self._sents[index]
-    
 
     def plot_length(self,steps=50, fname='.'):
         all_sents = self._train + self._test + self._dev

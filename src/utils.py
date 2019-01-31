@@ -21,6 +21,7 @@ def default_hparams():
                 "lr": 0.005,
                 "train_batch_sz": 200,
                 "eval_batch_sz": 50,
+                "n_workers":8,
                 "optimizer": "SGD",
                 "total_samples": 10000000,
                 "save_period": 5,

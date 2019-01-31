@@ -48,11 +48,9 @@ class LM(nn.Module):
 
         # decoder
         p_ss = self._hparams['Feature']['SS_prob']
-        if p_ss == 0.0:
-            self.logger.info('Using teacher forcing in decoder')
-            self.layers['decoder_rnn'] = nn.GRU(emb_sz,hidden_sz, num_layers=1, batch_first=True)
-        else:
-            self.layers['decoder_rnn'] = nn.GRUCell(emb_sz,hidden_sz)
+        self.logger.info("With prob %d, use decoded output as next input" %p_ss)
+        self.layers['decoder_rnn'] = nn.GRU(emb_sz,hidden_sz, num_layers=1, batch_first=True)
+
         # Use Adaptive softmax instead of softmax(Linear) to save GPU memory
         _cluster_sz = 5
         div_val = math.log(hidden_sz/_cluster_sz, len(cutoffs)+1)
@@ -148,10 +146,12 @@ class LM(nn.Module):
                     next_ = embedded[:,t-1,:]     # input to decoder at t: x_{t-1}
                     n_padding = _select_by_length(t, lengths)       # next_in: [b_, embd_sz]
                     next_in, next_hidden = next_[:(b-n_padding)], h0_t[:(b-n_padding)]
+                next_hidden = torch.unsqueeze(next_hidden,0).contiguous()
                 xhat_t = []
                 for d in range(D):
-                    h = self.layers['decoder_rnn'](next_in, next_hidden)   # hidden state at d step: [b_,hidden_sz]
-                    xhat_t_d_ = self.layers['decoder_remap'].log_prob(h)         # output logits: [b,|V|]
+                    next_in = torch.unsqueeze(next_in,1).contiguous()
+                    _,h = self.layers['decoder_rnn'](next_in, next_hidden)   # hidden state at d step: [1, b_, hidden_sz]
+                    xhat_t_d_ = self.layers['decoder_remap'].log_prob(torch.squeeze(h))         # output logits: [b,|V|]
                     xhat_t_d = F.pad(xhat_t_d_, ( 0,0,0,n_padding))
                     xhat_t.append(xhat_t_d)
                     _, idx = xhat_t_d.max(-1)   # input to decoder at (d+1) step  (b_,)
@@ -161,12 +161,9 @@ class LM(nn.Module):
                     else:
                         next_ = self.drop(self.layers['emb'](idx))     # [b_,embd_sz]
                     
-                    if t>0 :
-                        n_padding = _select_by_length(t+d+1, lengths)
-                        next_in = next_[: (b - n_padding)]
-                        next_hidden = h[:(b-n_padding)]
-                    else:
-                        next_in, next_hidden = next_, h
+                    n_padding = _select_by_length(t+d+1, lengths)
+                    next_in = next_[: (b - n_padding)]
+                    next_hidden = h[:,:(b-n_padding),:]
             
                 logprob = torch.stack(xhat_t,dim=1)    # [b,D,|V|]
                 logprobs.append(logprob)

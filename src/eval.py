@@ -41,6 +41,7 @@ if __name__=="__main__":
     _hparams = json.load(open('%s/config.json'%utils.format_dirname(args.ckpt_dir),'r'))
     hparams = utils.update_dict(default_hparams,_hparams)
     hparams['Trainer']['model_output'] = 'logprobs'
+    hparams['Model']['Feature']['SS_prob'] = 1.0
 
     trainer = Trainer(hparams,utils.format_dirname(args.data_dir), utils.format_dirname(args.ckpt_dir),
                 logger,args.device, test_only=True)
