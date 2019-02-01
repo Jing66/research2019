@@ -58,6 +58,20 @@ class LM(nn.Module):
         self.layers['decoder_remap'] = nn.AdaptiveLogSoftmaxWithLoss(hidden_sz, self._V, cutoffs, div_val)
 
 
+    def attn_fn(self, x):
+        '''return attention weights from graph'''
+        if len(x.shape)==1:
+            x = torch.unsqueeze(x,0)
+        embd = self.layers['emb'](x)
+        b = 1
+        T = x.shape[-1]
+        mask = utils.get_mask_3d(x)       # (b,T,T)
+        if x.is_cuda:
+            mask = mask.cuda()
+        g_matrix = self.G(embd, mask)      # [b,L,T,T]
+        return g_matrix.detach()
+
+
 
     def forward(self, x, lengths, output_probs=False):
         '''
@@ -99,7 +113,6 @@ class LM(nn.Module):
                 input_f = input_f.view(b,T,-1)
 
         # ----------------------- decoder -- input_f: [b,T,hidden] -----------------
-        # pdb.set_trace()
         logprobs = []
         next_in = embedded[torch.arange(b),lengths-1,:]      # input to decoder at t0: <EOS>
         n_padding= 0
@@ -151,12 +164,11 @@ class LM(nn.Module):
                 for d in range(D):
                     next_in = torch.unsqueeze(next_in,1).contiguous()
                     _,h = self.layers['decoder_rnn'](next_in, next_hidden)   # hidden state at d step: [1, b_, hidden_sz]
-                    xhat_t_d_ = self.layers['decoder_remap'].log_prob(torch.squeeze(h))         # output logits: [b,|V|]
+                    xhat_t_d_ = self.layers['decoder_remap'].log_prob(torch.squeeze(h,0))         # output logits: [b,|V|]
                     xhat_t_d = F.pad(xhat_t_d_, ( 0,0,0,n_padding))
                     xhat_t.append(xhat_t_d)
                     _, idx = xhat_t_d.max(-1)   # input to decoder at (d+1) step  (b_,)
-                    
-                    if torch.randn(1)[0].item() > p_ss:
+                    if torch.rand(1).item() > p_ss:
                         next_ = embedded[:,t+d,:]
                     else:
                         next_ = self.drop(self.layers['emb'](idx))     # [b_,embd_sz]
@@ -167,12 +179,14 @@ class LM(nn.Module):
             
                 logprob = torch.stack(xhat_t,dim=1)    # [b,D,|V|]
                 logprobs.append(logprob)
-        # pdb.set_trace()
         if output_probs:
             # output a tensor of [b,Dx(T-D+1),|V|]
             return torch.cat(logprobs,dim=1)
         else:
             return sum(logprobs)/len(logprobs)
+
+
+
 
 
 def init_weights(module):

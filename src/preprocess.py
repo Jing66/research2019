@@ -256,6 +256,13 @@ class Dataset(data.Dataset):
         plt.close()
 
 
+    def idx2str(self, data):
+        '''translate a list of int back to string'''
+        if not hasattr(self,'rev_vocab'):
+            self.rev_vocab = {v: k for k, v in self._vocab.items()}
+        if data.__class__ == torch.Tensor:
+            data = data.numpy()
+        return [self.rev_vocab[d] for d in data]
 
 
     def make_batch(self, bsize, mode, shuffle=True, max_len=np.inf, max_sample = np.inf):

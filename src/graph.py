@@ -35,7 +35,7 @@ class Graph(nn.Module):
             self.layers['q_conv_%d'%l] = q_conv
             self.layers['linear_k_%d'%l] = linear_k
             self.layers['linear_q_%d'%l] = linear_q
-        # b = nn.Parameters(torch.randn(self._T, self._T)) # bias term
+        # b = nn.Parameter(torch.zeros(1)) # bias term
         b = nn.Parameter(torch.zeros(self._hparams['n_layers']))
         self.graph_bias = b
 
@@ -48,11 +48,11 @@ class Graph(nn.Module):
         x = torch.transpose(x,1,2)          # [b,d,T]
         G_ = []
         for l in range(self._hparams['n_layers']):
-            # pdb.set_trace()
             ki = self.layers['k_conv_%d'%l](x)
             qi = self.layers['q_conv_%d'%l](x)                  # (b, n_filters, T)
             kl = self.layers['linear_k_%d'%l](torch.transpose(ki,1,2))
             ql = self.layers['linear_q_%d'%l](torch.transpose(qi,1,2))      # (b,T,n_linear_feat)
+            # bias = self.graph_bias
             bias = self.graph_bias[l]
             # this computes: G_l[b,i,j] = [RELU(dot(kl[b,i,:],ql[b,j,:]+b)]^2
             sparse_fn = getattr(F, self._hparams['Graph']['sparsity_fn'])

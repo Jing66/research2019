@@ -24,8 +24,8 @@ class ContextLMLoss(nn.Module):
         D = self.D
         losses = []
         for t in range(T-D+1):
-            pred = logprobs[:,t*D:(t+1)*D,:]        # [b,D,|V|]
-            l = F.nll_loss(torch.transpose(pred,1,2), X[:,t:t+D], ignore_index = PAD)
+            pred = logprobs[:,:,t*D:(t+1)*D]        # [b,|V|, D]
+            l = F.nll_loss(pred, X[:,t:t+D], ignore_index = PAD)
             self.logger.debug('loss per context L(Xhat[%d:%d], X[%d:%d]):%6.2f'%(t*D, (t+1)*D, t,t+D,l))
             losses.append(l)
         return sum(losses)/len(losses)
@@ -38,9 +38,14 @@ class ContextLMLoss(nn.Module):
         tot_correct = 0
         tot_valids = 0
         for t in range(T-D+1):
-            valids = (X[:,t:t+D]!=PAD)
             Xhat_t = Xhat[:, t*D:(t+1)*D]
-            num_correct = torch.sum(X[:, t:t+D][valids] == Xhat_t[valids])
-            tot_correct += num_correct.detach().cpu().item()
-            tot_valids += torch.sum(valids).detach().cpu().item()
+            num_valids, num_correct = accuracy_fn(Xhat_t, X[:,t:t+D])
+            tot_correct += num_correct
+            tot_valids += num_valids
         return tot_correct/(tot_valids)
+
+
+def accuracy_fn(Xhat, X):
+    valids = X.ne(PAD)
+    num_correct = torch.sum(torch.masked_select(Xhat,valids) == torch.masked_select(X,valids))
+    return torch.sum(valids).item(), num_correct.item()

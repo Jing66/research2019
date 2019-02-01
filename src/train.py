@@ -13,13 +13,24 @@ import pdb
 from preprocess import Dataset
 from dataloader import get_data_loader 
 from lm import LM
+from baseline_lm import BaseLM
 from graph import Graph
 import utils
 from log_utils import get_logger
-from lossFn import ContextLMLoss
+from lossFn import ContextLMLoss, accuracy_fn
 global logger
 
 
+PAD=0
+
+
+def calc_acc(logprobs, y):
+    '''
+    - logprobs: [b,T*(D-1),|V|]
+    '''
+    _, pred = torch.max(logprobs,2)
+    tot_valid, tot_correct = accuracy_fn(pred,y)
+    return float(tot_correct)/tot_valid
 
 
 class Trainer():
@@ -38,12 +49,24 @@ class Trainer():
         self.logger.info(str(self.dataset))
 
         # build model, loss, optimizer
-        self.logger.info("Constructing model with hparams:\n%s" %json.dumps(self.config['Model'],indent=4) )
-        self.g = Graph( self.config['Model'], self.logger)
+        model_type = self.config["Model"]["Type"]
+        self.logger.info("Constructing model <%s> with hparams:\n%s" %(model_type,json.dumps(self.config['Model'],indent=4) ))
         vocab_cutoff = self.dataset.cutoff_vocab(self.config['Trainer']['vocab_clusters'])
         output_probs = True if self.config['Trainer']['model_output'] == 'logprobs' else False
-        self._model = LM(self.dataset.vocab_sz, self.config['Model'], self.g, self.logger,vocab_cutoff)
-        self.criterion = ContextLMLoss(self.config['Model']['Feature']['context_sz'], self.logger)
+        if model_type == "GLoMoLM":
+            self.g = Graph( self.config['Model'], self.logger)
+            self._model = LM(self.dataset.vocab_sz, self.config['Model'], self.g, self.logger,vocab_cutoff)
+            self.criterion = ContextLMLoss(self.config['Model']['Feature']['context_sz'], self.logger)
+            self.accuracy_fn = self.criterion.accuracy
+            self._models = {'graph':self.g, 'model':self._model}
+        elif model_type == "BaseLM":
+            self._model = BaseLM(self.dataset.vocab_sz, self.config['Model'], self.logger, vocab_cutoff)
+            self.criterion = nn.CrossEntropyLoss(ignore_index=PAD)
+            self.accuracy_fn = calc_acc
+            self._models = {'model':self._model}
+        else:
+            raise ValueError("Model type %s unsupported" %model_type)
+
         self.logger.info('Constructing optimizer: %s' %self.config['Trainer']['optimizer'])
         optimizer = getattr(torch.optim, self.config['Trainer']['optimizer'])
         self._opt = optimizer(self._model.parameters(),self.config['Trainer']['lr'])
@@ -68,8 +91,8 @@ class Trainer():
             self.logger.info("checkpoint experiment loaded, model trained until epoch %d, best_loss=%6.4f" %(start_epoch,best_loss))
 
         if self._gpu is not None:
-            self.g.cuda()
-            self._model.cuda()
+            for m in self._models.values():
+                m.cuda()
             self.criterion.cuda()
             for state in self._opt.state.values():
                 for k, v in state.items():
@@ -78,7 +101,21 @@ class Trainer():
         return start_epoch, best_loss
 
 
-
+    def attn_visualize(self, idx, savedir):
+        '''save a file of attention weights for visualization'''
+        data = self.dataset[idx]
+        labels = self.dataset.idx2str(data)
+        if self._gpu is not None:
+            data = data.cuda()
+        with torch.no_grad():
+            attn_wgt = self._model.attn_fn(data).cpu()         # [b,L,T,T]
+        attn_wgt = torch.squeeze(attn_wgt,0)
+        if not os.path.exists(savedir):
+            os.makedirs(savedir)
+        torch.save({'label':labels, 'weights':attn_wgt},'%s/attn_%d.pkl'%(savedir,idx))
+        self.logger.info("Attention weights for %dth sentence saved in [%s]"%(idx,savedir))
+    
+    
     def run_one_epoch(self,  epoch, output_probs):
         '''
         Train one epoch of the whole dataset.
@@ -86,6 +123,7 @@ class Trainer():
             - dataset: class Dataset.
             - otuput_probs: if True, model output log probs, in which case we also calculate accuracy
         '''
+        self._model.train()
         self.logger.info('=> Training epoch %d'%epoch)
         data_iter = get_data_loader(self.dataset,"train", self.config['Trainer']['train_batch_sz'],
                         max_len=self.config['Model']['max_len'] , # upper bound of input sentence length
@@ -102,8 +140,8 @@ class Trainer():
 
             if output_probs:
                 y_pred = self._model(X, lens, output_probs)         # X:[b,T], y_pred:[b,T*D,|V|]
-                loss = self.criterion(y_pred, X)
-                acc = self.criterion.accuracy(y_pred, X)
+                loss = self.criterion(torch.transpose(y_pred,1,2), X)
+                acc = self.accuracy_fn(y_pred, X)
                 accuracies += acc
             else:
                 loss = self._model(X, lens, output_probs)
@@ -174,7 +212,8 @@ class Trainer():
 
 
     def validate(self,  ds_name='dev'):
-        self.logger.info("Start evaluating on %s set..." %ds_name)
+        self.logger.info("Setting model to eval mode. Start evaluating on %s set..." %ds_name)
+        self._model.eval()
         losses, accuracies = 0, 0
         data_iter_eval = get_data_loader(self.dataset, ds_name, self.config['Trainer']['eval_batch_sz'],
                             max_len=self.config['Model']['max_len'], # upper bound of input sentence length
@@ -183,13 +222,15 @@ class Trainer():
             for step, (data, data_lens) in enumerate(data_iter_eval):
                 X= torch.autograd.Variable(data, requires_grad=False)
                 lens = torch.autograd.Variable(data_lens, requires_grad=False)
-                if self._gpu is  not None:
+                if self._gpu is not None:
                     X = X.cuda()
                     lens = lens.cuda()
 
                 y_pred = self._model(X, lens, True)
-                loss = self.criterion(y_pred, X)
-                acc =  self.criterion.accuracy(y_pred,X)
+                y_true = X
+                y_true[:,lens-1]=PAD
+                loss = self.criterion(torch.transpose(y_pred,1,2), y_true[:,:-1])
+                acc =  self.accuracy_fn(y_pred, y_true[:,:-1])
                 accuracies += acc
                 del y_pred
                 losses += loss.detach().cpu().item()
@@ -202,11 +243,11 @@ class Trainer():
         if not os.path.exists(savedir):
             os.makedirs(savedir)
         self.logger.info('Saving model into %s/exprt.ckpt...'%savedir)
+        save_dict = {'optimizer':self._opt.state_dict(),'epoch': epoch, 'loss':loss}
+        for m_name, model in self._models.items():
+            save_dict[m_name]=model.state_dict()
         # save state of training, model, optimizer
-        torch.save({'model':self._model.state_dict(),
-            'optimizer':self._opt.state_dict(),
-            'graph': self.g.state_dict(),
-            'epoch': epoch, 'loss':loss}, "%s/exprt.ckpt"%savedir)
+        torch.save(save_dict, "%s/exprt.ckpt"%savedir)
         # save the training/model hparams
         with open('%s/config.json'%savedir,'w') as f:
             json.dump(self.config, f, indent=4)
@@ -228,6 +269,9 @@ if __name__=="__main__":
                         help='generate logs in fname.log')
     parser.add_argument('-s', '--save_dir', default='experiment/test', 
                         help='path to save trained model')
+    parser.add_argument('-v','--visualize',nargs='+', default=None, 
+                        help='indices for selecting visualizations')
+    parser.add_argument('--no-train', dest='no_train', default=False, action='store_true')
     parser.add_argument('--device',type=int, default=None)
     parser.add_argument('--seed', default=999, type=int, help="torch random seed")
     parser.add_argument('--cpu', dest='cpu', default=False, action='store_true')
@@ -256,7 +300,11 @@ if __name__=="__main__":
         _hparams = json.load(open(args.config,'r'))
     default_hparams = utils.default_hparams()
     hparams = utils.update_dict(default_hparams,_hparams)
-
     trainer = Trainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.resume),logger,args.device)
-    trainer.train(args.save_dir) 
+    if not args.no_train:
+        trainer.train(args.save_dir) 
+    if args.visualize:
+        for idx in args.visualize:
+            _,_ = trainer.load_ckpt()
+            trainer.attn_visualize(int(idx), args.save_dir)
 

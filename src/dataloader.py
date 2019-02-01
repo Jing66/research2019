@@ -14,8 +14,8 @@ def get_data_loader(dataset, mode, batch_size=100, max_len=np.inf, max_sample=np
         indices = np.arange(len(dataset._dev))+len(dataset._train)
     else:
         indices = np.arange(len(dataset._train))
-    if max_len!=np.inf:
-        indices = indices[:max_len]    
+    if max_sample < len(indices):
+        indices = indices[:max_sample]    
     sampler = data.SubsetRandomSampler(indices)
     data_loader = data.DataLoader(dataset=dataset, batch_size=batch_size,
                             sampler=sampler, num_workers=n_workers, 
@@ -33,7 +33,7 @@ def collate_fn(batch, max_len):
     ''' 
     def _merge(seqs, max_len):
         batch_lens = torch.LongTensor([len(d) for d in seqs])
-        if max_len == np.inf:
+        if max_len > batch_lens[0]:
             max_len = batch_lens[0]
         else:
             batch_lens[batch_lens > max_len] = max_len

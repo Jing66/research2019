@@ -29,6 +29,7 @@ def default_hparams():
                 "vocab_clusters": 5
             },
             "Model": {
+                "Type": "GLoMoLM",
                 "max_len": 100,
                 "n_layers": 6,
                 "embd_sz": 300,
