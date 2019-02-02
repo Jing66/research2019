@@ -12,43 +12,70 @@ import pdb
 import matplotlib.pyplot as plt
 import argparse
 
-def default_hparams():
+def default_hparams(model='GLoMo'):
     '''return a set of default hyperparams'''
-    hparam_str = '''
-        {
-            "Trainer": {
-                "epoch": 50,
-                "lr": 0.005,
-                "train_batch_sz": 200,
-                "eval_batch_sz": 50,
-                "n_workers":8,
-                "optimizer": "SGD",
-                "total_samples": 10000000,
-                "save_period": 5,
-                "model_output": "loss",
-                "vocab_clusters": 5
-            },
-            "Model": {
-                "Type": "GLoMoLM",
-                "max_len": 100,
-                "n_layers": 6,
-                "embd_sz": 300,
-                "dropout": 0.5,
-                "Graph": {
-                    "sparsity_fn": "leaky_relu",
-                    "kernel_sz": 7,
-                    "linear_feat": 100,
-                    "n_filter_k": 20,
-                    "n_filter_q": 20
+    if model=='GLoMo':
+        hparam_str = '''
+            {
+                "Trainer": {
+                    "epoch": 50,
+                    "lr": 0.005,
+                    "train_batch_sz": 200,
+                    "eval_batch_sz": 50,
+                    "n_workers":8,
+                    "optimizer": "SGD",
+                    "total_samples": 10000000,
+                    "save_period": 5,
+                    "model_output": "loss",
+                    "vocab_clusters": 5
                 },
-                "Feature": {
-                    "context_sz": 5,
-                    "compose_fn": "GRUCell",
-                    "SS_prob":0.0
+                "Model": {
+                    "max_len": 100,
+                    "n_layers": 6,
+                    "embd_sz": 300,
+                    "dropout": 0.5,
+                    "Graph": {
+                        "sparsity_fn": "leaky_relu",
+                        "kernel_sz": 7,
+                        "linear_feat": 100,
+                        "n_filter_k": 20,
+                        "n_filter_q": 20
+                    },
+                    "Feature": {
+                        "context_sz": 5,
+                        "compose_fn": "GRUCell",
+                        "SS_prob":0.0
+                    }
                 }
             }
-        }
+            '''
+    elif model=='BaselineLM':
+        hparam_str = '''
+            {
+                "Trainer": {
+                    "save_period": 7,
+                    "epoch": 30,
+                    "lr": 0.0001,
+                    "train_batch_sz": 50,
+                    "eval_batch_sz": 10,
+                    "optimizer": "Adam",
+                    "vocab_clusters": 2,
+                    "total_samples":500000,
+                    "model_output": "loss",
+                    "n_workers": 6
+                },
+                "Model": {
+                    "max_len": 60, 
+                    "embd_sz": 500,
+                    "dropout": 0.0, 
+                    "hidden_sz": 500 ,
+                    "rnn_layers":4,
+                    "rnn_type": "GRU"
+                }
+            }
         '''
+    else:
+        raise ValueError('Model type %s has no default hparams'%model)
     return json.loads(hparam_str)
 
 
@@ -67,19 +94,24 @@ def get_free_gpu():
 def get_mask_2d(sequences_batch, sequences_lengths):
     batch_size = sequences_batch.size()[0]
     max_length = torch.max(sequences_lengths)
-    mask = torch.ones(batch_size, max_length, dtype=torch.float)
-    mask[sequences_batch[:, :max_length] == 0] = 0.0
+    mask = torch.ones(batch_size, max_length, dtype=torch.uint8)
+    mask[sequences_batch[:, :max_length] == 0] = 0
     return mask
 
 def get_mask_3d(seq_batch, mask_idx=0):
     batch_sz = seq_batch.size()[0]
     max_len = seq_batch.size()[1]
-    mask = torch.ones(batch_sz, max_len, max_len)
-    mask[seq_batch==mask_idx] = 0.0
+    mask = torch.ones(batch_sz, max_len, max_len, dtype=torch.uint8)
+    mask[seq_batch==mask_idx] = 0
     mask2 = torch.transpose(mask,1,2)
-    mask2[seq_batch==mask_idx] = 0.0
+    mask2[seq_batch==mask_idx] = 0
     return torch.autograd.Variable(mask2)
 
+def get_subseq_mask(x):
+    b, T = x.shape[0], x.shape[1]
+    subsequent_mask = torch.triu( torch.ones((T, T), device=x.device, dtype=torch.uint8), diagonal=1)
+    subsequent_mask = subsequent_mask.unsqueeze(0).expand(b, -1, -1)  # b x ls x ls
+    return subsequent_mask
 
 
 def memReport():

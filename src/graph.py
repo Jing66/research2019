@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import utils
 import pdb
-EPSILON = 1e-4
+EPSILON = 1e-9
 
 
 class Graph(nn.Module):
@@ -40,11 +40,14 @@ class Graph(nn.Module):
         self.graph_bias = b
 
 
-    def forward(self, x, mask):
+    def forward(self, x, pad_mask):
         ''' 
              x: [x_1...x_T] input, shape (b, T, d)
              return: G, shape (b, L, T, T)
         '''
+        # mask attention s.t it doesn't have access to future. [b,i:,i]=0
+        subseq_mask = utils.get_subseq_mask(x)
+
         x = torch.transpose(x,1,2)          # [b,d,T]
         G_ = []
         for l in range(self._hparams['n_layers']):
@@ -57,9 +60,10 @@ class Graph(nn.Module):
             # this computes: G_l[b,i,j] = [RELU(dot(kl[b,i,:],ql[b,j,:]+b)]^2
             sparse_fn = getattr(F, self._hparams['Graph']['sparsity_fn'])
             G_l_unnorm = (sparse_fn(kl@torch.transpose(ql,1,2)+bias))**2       # (b,T,T)
-            G_l_masked = G_l_unnorm * mask
-            Z = torch.sum(G_l_masked, dim=1, keepdim=True)                  #(b,T,T)
-            G_l = G_l_masked/(Z+EPSILON)                    # Z might be zero since RELU sets  all neg. values to 0
+            mask = pad_mask & subseq_mask
+            G_l_unnorm.masked_fill_(mask==0,0.0)
+            Z = torch.sum(G_l_unnorm, dim=1, keepdim=True)                  #(b,T,T)
+            G_l = G_l_unnorm/(Z+EPSILON)                    # Z might be zero since RELU sets  all neg. values to 0
             G_.append(G_l)
         G = torch.stack(G_, dim=1) # (b,L,T,T)
         return G
