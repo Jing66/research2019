@@ -13,6 +13,7 @@ from train import Trainer
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description='Evaluate a trained model ')
+    parser.add_argument('model', help="Model class to evaluate")
     parser.add_argument('ckpt_dir', help='path to saved checkpoint model')
     parser.add_argument('data_dir', help='path to test data folder')
     parser.add_argument('-l', '--log_fname', default='eval', 
@@ -37,14 +38,19 @@ if __name__=="__main__":
     if args.device is not None:
         torch.cuda.manual_seed(args.seed)
 
-    default_hparams = utils.default_hparams()
+    default_hparams = utils.default_hparams(args.model)
     _hparams = json.load(open('%s/config.json'%utils.format_dirname(args.ckpt_dir),'r'))
     hparams = utils.update_dict(default_hparams,_hparams)
     hparams['Trainer']['model_output'] = 'logprobs'
     hparams['Model']['Feature']['SS_prob'] = 1.0
 
-    trainer = Trainer(hparams,utils.format_dirname(args.data_dir), utils.format_dirname(args.ckpt_dir),
-                logger,args.device, test_only=True)
+    if args.model=="GLoMo":
+        trainer = Trainer(hparams,utils.format_dirname(args.data_dir), utils.format_dirname(args.ckpt_dir), logger,args.device, test_only=True)
+    elif args.model=='BaselineLM':
+        trainer = BaseLMTrainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.resume),logger,args.device)
+    else:
+        raise ValueError('Model type %s unsupported'%args.model)
+
     trainer.load_ckpt()
     start = time.time() 
     loss, accuracy = trainer.validate('test')

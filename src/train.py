@@ -33,7 +33,8 @@ def calc_acc(logprobs, y):
     return float(tot_correct)/tot_valid
 
 
-class Trainer():
+
+class Trainer(object):
     def __init__(self, config, datadir,ckpt, _logger=None, gpu=None, test_only=False):
         self.config = config
         self.logger = _logger
@@ -42,30 +43,25 @@ class Trainer():
         self.build(datadir, test_only)
 
 
+    def _build_models(self):
+        vocab_cutoff = self.dataset.cutoff_vocab(self.config['Trainer']['vocab_clusters'])
+        self.g = Graph( self.config['Model'], self.logger)
+        self._model = LM(self.dataset.vocab_sz, self.config['Model'], self.g, self.logger,vocab_cutoff)
+        self.criterion = ContextLMLoss(self.config['Model']['Feature']['context_sz'], self.logger)
+        self.accuracy_fn = self.criterion.accuracy
+        self._models = {'graph':self.g, 'model':self._model}
+
 
     def build(self, datadir, test_only=False):
+        self.logger.info("Building trainer class %s" %self.__class__.__name__)
         self.logger.info("Loading data from [%s]..." %(datadir))
         self.dataset = Dataset.load_ds(datadir, test_only)
         self.logger.info(str(self.dataset))
 
         # build model, loss, optimizer
-        model_type = self.config["Model"]["Type"]
-        self.logger.info("Constructing model <%s> with hparams:\n%s" %(model_type,json.dumps(self.config['Model'],indent=4) ))
-        vocab_cutoff = self.dataset.cutoff_vocab(self.config['Trainer']['vocab_clusters'])
-        output_probs = True if self.config['Trainer']['model_output'] == 'logprobs' else False
-        if model_type == "GLoMoLM":
-            self.g = Graph( self.config['Model'], self.logger)
-            self._model = LM(self.dataset.vocab_sz, self.config['Model'], self.g, self.logger,vocab_cutoff)
-            self.criterion = ContextLMLoss(self.config['Model']['Feature']['context_sz'], self.logger)
-            self.accuracy_fn = self.criterion.accuracy
-            self._models = {'graph':self.g, 'model':self._model}
-        elif model_type == "BaseLM":
-            self._model = BaseLM(self.dataset.vocab_sz, self.config['Model'], self.logger, vocab_cutoff)
-            self.criterion = nn.CrossEntropyLoss(ignore_index=PAD)
-            self.accuracy_fn = calc_acc
-            self._models = {'model':self._model}
-        else:
-            raise ValueError("Model type %s unsupported" %model_type)
+        self.logger.info("Constructing model with hparams:\n%s" %(json.dumps(self.config['Model'],indent=4) ))
+
+        self._build_models()
 
         self.logger.info('Constructing optimizer: %s' %self.config['Trainer']['optimizer'])
         optimizer = getattr(torch.optim, self.config['Trainer']['optimizer'])
@@ -116,6 +112,21 @@ class Trainer():
         self.logger.info("Attention weights for %dth sentence saved in [%s]"%(idx,savedir))
     
     
+    def forward_pass(self, X, lens, output_probs,kwargs):
+        ''' run one forward pass of the model, return accuracy and loss'''
+        y_pred = self._model(X, lens, output_probs)         # X:[b,T], y_pred:[b,T*D,|V|]
+        if y_pred.dim():
+            loss = self.criterion(torch.transpose(y_pred,1,2), X[:,1:])
+            acc = self.accuracy_fn(y_pred, X[:,1:])
+            return loss, acc, None
+        else:
+            loss = y_pred
+            return loss, 0.0, None
+            
+        
+    def forward_args(self):
+        return None
+
     def run_one_epoch(self,  epoch, output_probs):
         '''
         Train one epoch of the whole dataset.
@@ -129,6 +140,7 @@ class Trainer():
                         max_len=self.config['Model']['max_len'] , # upper bound of input sentence length
                         max_sample=self.config['Trainer']['total_samples'],  # total number of samples to train
                         n_workers=self.config['Trainer']['n_workers'])
+        kwargs = self.forward_args()
         losses, accuracies = 0,0
         for step, (data, data_lens) in enumerate(data_iter):
             X = torch.autograd.Variable(data, requires_grad=False)
@@ -138,16 +150,11 @@ class Trainer():
                 lens = lens.cuda()
             self._opt.zero_grad()
 
-            if output_probs:
-                y_pred = self._model(X, lens, output_probs)         # X:[b,T], y_pred:[b,T*D,|V|]
-                loss = self.criterion(torch.transpose(y_pred,1,2), X)
-                acc = self.accuracy_fn(y_pred, X)
-                accuracies += acc
-            else:
-                loss = self._model(X, lens, output_probs)
+            loss, acc, kwargs = self.forward_pass(X, lens, output_probs,kwargs)
 
             self.logger.debug('loss per batch = %f'%loss)
             losses+=loss.detach().cpu().item()
+            accuracies += acc
 
             nn.utils.clip_grad_norm_(self._model.parameters(), 2)  # gradient clipping
             loss.backward()
@@ -218,6 +225,7 @@ class Trainer():
         data_iter_eval = get_data_loader(self.dataset, ds_name, self.config['Trainer']['eval_batch_sz'],
                             max_len=self.config['Model']['max_len'], # upper bound of input sentence length
                             n_workers=self.config['Trainer']['n_workers'])
+        kwargs = self.forward_args()
         with torch.no_grad():
             for step, (data, data_lens) in enumerate(data_iter_eval):
                 X= torch.autograd.Variable(data, requires_grad=False)
@@ -226,13 +234,8 @@ class Trainer():
                     X = X.cuda()
                     lens = lens.cuda()
 
-                y_pred = self._model(X, lens, True)
-                y_true = X
-                y_true[:,lens-1]=PAD
-                loss = self.criterion(torch.transpose(y_pred,1,2), y_true[:,:-1])
-                acc =  self.accuracy_fn(y_pred, y_true[:,:-1])
+                loss, acc,kwargs = self.forward_pass(X, lens, True, kwargs)
                 accuracies += acc
-                del y_pred
                 losses += loss.detach().cpu().item()
         loss_per_epoch = losses/(step+1)
         return loss_per_epoch, accuracies/(step+1)
@@ -253,13 +256,40 @@ class Trainer():
             json.dump(self.config, f, indent=4)
 
 
+class BaseLMTrainer(Trainer):
+    def __init__(self, config, datadir,ckpt, _logger=None, gpu=None, test_only=False):
+        super(BaseLMTrainer,self).__init__(config, datadir,ckpt, _logger, gpu, test_only)
+
+    def forward_args(self):
+        return {"hidden":None}
+    
+    def forward_pass(self, X, lens,output_probs, kwargs):
+        last_hidden = kwargs['hidden']
+        acc = 0.0
+        if output_probs:
+            logprobs, hidden  = self._model(X, lens, last_hidden, output_probs)         # X:[b,T], y_pred:[b,T*D,|V|]
+            loss = self.criterion(torch.transpose(logprobs,1,2), X[:,1:])
+            acc = self.accuracy_fn(logprobs, X[:,1:])
+        else:
+            loss, hidden = self._model(X, lens, last_hidden, output_probs)
+        hn = BaseLM.repackage(hidden)
+        return loss, acc, {'hidden':hn}
+    
+    def _build_models(self):
+        vocab_cutoff = self.dataset.cutoff_vocab(self.config['Trainer']['vocab_clusters'])
+        self._model = BaseLM(self.dataset.vocab_sz, self.config['Model'], self.logger, vocab_cutoff)
+        self.criterion = nn.NLLLoss(ignore_index=PAD)
+        self.accuracy_fn = calc_acc
+        self._models = {'model':self._model}
+
 
 
 
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description='Train a model')
-    parser.add_argument('-c','--config', default='./experiment/toy_config.json',
+    parser.add_argument('model', default="GLoMo", help="which model to train")
+    parser.add_argument('-c','--config', default=None,
                         help='path to config file, default ./experiment/toy_config.json')
     parser.add_argument('-r', '--resume', default=None, type=str, 
                         help='path to last checkpoint model')
@@ -293,14 +323,25 @@ if __name__=="__main__":
         torch.cuda.manual_seed(args.seed)
         
     # overwrite config files from checkpoint
+    _hparams={}
     if args.resume:
         logger.info('Overriding hparams from %s/config.json...'%utils.format_dirname(args.resume))
         _hparams = json.load(open('%s/config.json'%utils.format_dirname(args.resume),'r'))
-    else:
-        _hparams = json.load(open(args.config,'r'))
-    default_hparams = utils.default_hparams()
+    elif args.config:
+        try:
+            _hparams = json.load(open(args.config,'r'))
+        except IOError:
+            logger.error("Cannot load file %s, using default"%args.config)
+    default_hparams = utils.default_hparams(args.model)
     hparams = utils.update_dict(default_hparams,_hparams)
-    trainer = Trainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.resume),logger,args.device)
+
+    if args.model=="GLoMo":
+        trainer = Trainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.resume),logger,args.device)
+    elif args.model=='BaselineLM':
+        trainer = BaseLMTrainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.resume),logger,args.device)
+    else:
+        raise ValueError('Model type %s unsupported'%args.model)
+
     if not args.no_train:
         trainer.train(args.save_dir) 
     if args.visualize:

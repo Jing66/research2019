@@ -18,10 +18,11 @@ import pdb
 
 PAD = 0
 EOS = 1
-UNK = 2
-UNK_THRES = 10       # if a word appears <UNK_THRES times, make it UNK
+START = 2
+UNK = 3
+UNK_THRES = 20       # if a word appears <UNK_THRES times, make it UNK
 RATIO = [7.5,1.5,1]     # ratio of train/dev/test split
-SENT_THRES = 10      # if a sentence has < SNET_THRES words, ignore it
+SENT_THRES = 15      # if a sentence has < SNET_THRES words, ignore it
 
 
 def _pad_or_trunc(arr, size):
@@ -42,7 +43,7 @@ def normalize_str(s):
 
 
 class Dataset(data.Dataset):
-    def __init__(self, train=[], dev=[], test=[] ,vocab={'PAD':PAD, 'EOS':EOS,'UNK':UNK}, w_freq=None):
+    def __init__(self, train=[], dev=[], test=[] ,vocab={'PAD':PAD, 'EOS':EOS,'START':START,'UNK':UNK}, w_freq=None):
         self._train = train
         self._test = test
         self._dev = dev
@@ -100,6 +101,7 @@ class Dataset(data.Dataset):
         ratio/= np.sum(ratio)
         train_len = int(ratio[0]*len(sents))
         dev_len = int(ratio[1]*len(sents))
+        n_skip = 0
         # shuffle all sentences randomly before splitting into train/dev/test
         shuffled_idx = np.random.permutation(len(sents))
         word2freq = {}
@@ -107,10 +109,12 @@ class Dataset(data.Dataset):
         for idx in range( train_len + dev_len):
             words = word_tokenize(sents[shuffled_idx[idx]])
             if len(words) < SENT_THRES:
-                dev_len -=1
+                n_skip +=1
                 continue                # sentence too short
             for w in words:
                 word2freq[w] = word2freq.get(w,0)+1
+        train_len = int(ratio[0]*(len(sents)-n_skip))
+        dev_len = int(ratio[1]*(len(sents)-n_skip))
 
         # for LM: make sure more frequent words have lower index     
         word2freq = sorted(word2freq.items(), key=lambda kv:-kv[1])
@@ -120,7 +124,7 @@ class Dataset(data.Dataset):
             if freq > UNK_THRES:
                 self._vocab[w] = len(self._vocab)
                 w_freq.append(freq)
-        assert len(w_freq)+3==len(self._vocab), "something wrong with preprocessing"
+        assert len(w_freq)+4==len(self._vocab), "something wrong with preprocessing"
         self.w_freq = np.array(w_freq)
 
         # train -- convert to idx and map to vocab
@@ -131,7 +135,7 @@ class Dataset(data.Dataset):
             words = word_tokenize(sents[shuffled_idx[idx]])
             if len(words) < SENT_THRES:
                 continue                # sentence too short
-            sent_idx = []
+            sent_idx = [START]
             for w in words:
                 sent_idx.append(self._vocab.get(w,UNK))
             sent_idx.append(EOS)
@@ -144,7 +148,7 @@ class Dataset(data.Dataset):
             words = word_tokenize(sents[shuffled_idx[j]])
             if len(words) < SENT_THRES:
                 continue
-            sent_idx = []
+            sent_idx = [START]
             for w in words:
                 sent_idx.append(self._vocab.get(w,UNK))
             sent_idx.append(EOS)
