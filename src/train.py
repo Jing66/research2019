@@ -332,12 +332,12 @@ if __name__=="__main__":
             _hparams = json.load(open(args.config,'r'))
         except IOError:
             logger.error("Cannot load file %s, using default"%args.config)
-    default_hparams = utils.default_hparams(args.model)
+    default_hparams = utils.default_hparams(args.model.lower())
     hparams = utils.update_dict(default_hparams,_hparams)
 
-    if args.model=="GLoMo":
+    if args.model.lower()=="glomo":
         trainer = Trainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.resume),logger,args.device)
-    elif args.model=='BaselineLM':
+    elif args.model.lower()=='baselinelm':
         trainer = BaseLMTrainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.resume),logger,args.device)
     else:
         raise ValueError('Model type %s unsupported'%args.model)

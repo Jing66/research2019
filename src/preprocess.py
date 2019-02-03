@@ -303,15 +303,6 @@ def __test(args):
     ds2 = Dataset.load_ds(args.out_dir)
     logger.info(ds2)
     cutoffs = ds.cutoff_vocab(5)
-    print('vocab in 10 cutoffs', cutoffs)
-    dg = ds2.make_batch(200, 'test',max_len=100)
-    while True:
-        try:
-            data, lengths = next(dg)
-            print('data', data.shape, data[0], data[-1], lengths)
-        except StopIteration:
-            print("data set all consumed!")
-            break
     ds2.plot_length(fname=args.out_dir)
 
 

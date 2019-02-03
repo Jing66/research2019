@@ -47,7 +47,6 @@ class Graph(nn.Module):
         '''
         # mask attention s.t it doesn't have access to future. [b,i:,i]=0
         subseq_mask = utils.get_subseq_mask(x)
-
         x = torch.transpose(x,1,2)          # [b,d,T]
         G_ = []
         for l in range(self._hparams['n_layers']):

@@ -92,12 +92,9 @@ class LM(nn.Module):
         # feature predictor -- encoder
         input_f = self.drop(self.layers['emb'](x)) # [b,T,embd_sz]
         mask = utils.get_mask_3d(x)       # (b,T,T)
-        if is_cuda:
-            mask = mask.cuda()
         embedded = input_f.clone()
         # compute graph affinity matrix
         G = self.G(embedded, mask)                #(b,L,T,T)
-        # pdb.set_trace()
 
         for l in range(1, self._hparams['n_layers']+1):
             G_l = G[:,l-1,:,:]  #(b,T,T)
@@ -124,12 +121,17 @@ class LM(nn.Module):
             return n_padding.detach().item()
 
         for t in range(T-D):
+            # pdb.set_trace()
             h0_t = input_f[:,t,: ]                # init h0 of decoder at t: f_t (b,hidden_sz)
 
             # ------ CASE teacher forcing, use packed_padded_seq to speed up
             if p_ss == 0.0:
                 inputs = embedded[:, t:t+D,: ]   # inputs: [b,D,hidden]
-                n_padding = _select_by_length(t+1,lengths)
+                if output_probs:
+                    n_padding = _select_by_length(t+1,lengths)
+                else:
+                    # AdaptiveLogSoftmaxLoss doesn't support ignore_idx, so we must make sure in corresponsing ytrue there's no pad
+                    n_padding = _select_by_length(t+D, lengths)
                 inputs, h0_t = inputs[:(b-n_padding)], h0_t[:(b-n_padding)]
                 _tmp = torch.tensor([D],device=x.device, dtype=torch.int64)
                 lens = torch.min(lengths[:(b-n_padding)]-t-1, _tmp.expand(b-n_padding)).detach()

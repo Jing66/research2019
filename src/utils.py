@@ -12,9 +12,9 @@ import pdb
 import matplotlib.pyplot as plt
 import argparse
 
-def default_hparams(model='GLoMo'):
+def default_hparams(model='glomo'):
     '''return a set of default hyperparams'''
-    if model=='GLoMo':
+    if model=='glomo':
         hparam_str = '''
             {
                 "Trainer": {
@@ -33,7 +33,7 @@ def default_hparams(model='GLoMo'):
                     "max_len": 100,
                     "n_layers": 6,
                     "embd_sz": 300,
-                    "dropout": 0.5,
+                    "dropout": 0.0,
                     "Graph": {
                         "sparsity_fn": "leaky_relu",
                         "kernel_sz": 7,
@@ -49,7 +49,7 @@ def default_hparams(model='GLoMo'):
                 }
             }
             '''
-    elif model=='BaselineLM':
+    elif model=='baselinelm':
         hparam_str = '''
             {
                 "Trainer": {
@@ -101,7 +101,7 @@ def get_mask_2d(sequences_batch, sequences_lengths):
 def get_mask_3d(seq_batch, mask_idx=0):
     batch_sz = seq_batch.size()[0]
     max_len = seq_batch.size()[1]
-    mask = torch.ones(batch_sz, max_len, max_len, dtype=torch.uint8)
+    mask = torch.ones(batch_sz, max_len, max_len, device=seq_batch.device, dtype=torch.uint8)
     mask[seq_batch==mask_idx] = 0
     mask2 = torch.transpose(mask,1,2)
     mask2[seq_batch==mask_idx] = 0
