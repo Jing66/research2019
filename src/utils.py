@@ -14,7 +14,7 @@ import argparse
 
 def default_hparams(model='glomo'):
     '''return a set of default hyperparams'''
-    if model=='glomo':
+    if model.lower()=='glomo':
         hparam_str = '''
             {
                 "Trainer": {
@@ -49,7 +49,7 @@ def default_hparams(model='glomo'):
                 }
             }
             '''
-    elif model=='baselinelm':
+    elif model.lower()=='baselinelm':
         hparam_str = '''
             {
                 "Trainer": {

@@ -127,15 +127,15 @@ class LM(nn.Module):
             # ------ CASE teacher forcing, use packed_padded_seq to speed up
             if p_ss == 0.0:
                 inputs = embedded[:, t:t+D,: ]   # inputs: [b,D,hidden]
+                _tmp = torch.tensor([D],device=x.device, dtype=torch.int64)
                 if output_probs:
                     n_padding = _select_by_length(t+1,lengths)
+                    lens = torch.min(lengths[:(b-n_padding)]-t-1, _tmp.expand(b-n_padding)).detach()
                 else:
                     # AdaptiveLogSoftmaxLoss doesn't support ignore_idx, so we must make sure in corresponsing ytrue there's no pad
                     n_padding = _select_by_length(t+D, lengths)
+                    lens = _tmp.expand(b-n_padding).detach()
                 inputs, h0_t = inputs[:(b-n_padding)], h0_t[:(b-n_padding)]
-                _tmp = torch.tensor([D],device=x.device, dtype=torch.int64)
-                lens = torch.min(lengths[:(b-n_padding)]-t-1, _tmp.expand(b-n_padding)).detach()
-                # lens = _tmp.expand(b-n_padding).detach()
                 packed_input = nn.utils.rnn.pack_padded_sequence(inputs, lens, batch_first=True)
                 packed_output, _ = self.layers['decoder_rnn'](packed_input, torch.unsqueeze(h0_t,0).contiguous())      
                 output, _ = nn.utils.rnn.pad_packed_sequence(packed_output)     # [b,D,hidden]

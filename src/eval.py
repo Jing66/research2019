@@ -44,9 +44,9 @@ if __name__=="__main__":
     hparams['Trainer']['model_output'] = 'logprobs'
     hparams['Model']['Feature']['SS_prob'] = 1.0
 
-    if args.model=="GLoMo":
+    if args.model.lower()=="glomo":
         trainer = Trainer(hparams,utils.format_dirname(args.data_dir), utils.format_dirname(args.ckpt_dir), logger,args.device, test_only=True)
-    elif args.model=='BaselineLM':
+    elif args.model.lower()=='baselinelm':
         trainer = BaseLMTrainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.resume),logger,args.device)
     else:
         raise ValueError('Model type %s unsupported'%args.model)
