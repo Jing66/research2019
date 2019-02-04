@@ -66,8 +66,6 @@ class LM(nn.Module):
         b = 1
         T = x.shape[-1]
         mask = utils.get_mask_3d(x)       # (b,T,T)
-        if x.is_cuda:
-            mask = mask.cuda()
         g_matrix = self.G(embd, mask)      # [b,L,T,T]
         return g_matrix.detach()
 

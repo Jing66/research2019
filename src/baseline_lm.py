@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+from torch.autograd import Variable
 import math
 import pdb
 
@@ -40,29 +41,52 @@ class BaseLM(nn.Module):
         self._decoder_remap = nn.AdaptiveLogSoftmaxWithLoss(hidden_sz, self._V, cutoffs, div_val)
         
 
-    def forward(self, x, lengths, output_probs=False):
+    def forward(self, x, lengths, hidden, output_probs=False):
         is_cuda = x.is_cuda
         T = x.shape[-1]             # max length
         b = x.shape[0]
+        if hidden is not None:
+            hidden = hidden[:,:b,:].contiguous()
         inputs = self._drop(self._embedding(x))
         sos = inputs[torch.arange(b), lengths-1, :]
-        inputs = torch.cat([torch.unsqueeze(sos,1),inputs],dim=1)  # [b,T+1, embd_sz]
+        _idx = torch.arange(T-1).repeat(b,1)
+        l = lengths.repeat(T-1,1).t()
+        if is_cuda:
+            l = l.cuda()
+            _idx = _idx.cuda()
+        _idx=torch.where(_idx>=l-1, _idx+1, _idx)
+        input_wo_eos =torch.cat([torch.index_select(a,0,i).unsqueeze(0) for a, i in zip(inputs, _idx) ])
+        inputs = torch.cat([torch.unsqueeze(sos,1),input_wo_eos],dim=1)  # [b,T+1, embd_sz]
 
-        packed_input = nn.utils.rnn.pack_padded_sequence(inputs, lengths-1, batch_first=True)
-        packed_output, last_state = self._rnn(packed_input)      
+        packed_input = nn.utils.rnn.pack_padded_sequence(inputs, lengths, batch_first=True)
+        packed_output, hn = self._rnn(packed_input,hidden)      
         output, _ = nn.utils.rnn.pad_packed_sequence(packed_output)     # [b,T,hidden]
-        output_ = output.view(b*(T-1), -1).contiguous()
+        output_ = output.view(b*(T), -1).contiguous()
         output = self._drop(output_)
         if output_probs:
             logprob_ = self._decoder_remap.log_prob(output)      # (b*T,)
-            logprob = logprob_.view(b,T-1, -1)
-            return logprob
+            logprob = logprob_.view(b,T, -1)
+            return logprob, hn
         else:
-            _, loss = self._decoder_remap(output,x[:,:-1].contiguous().view(-1,))
-            return loss
+            _, loss = self._decoder_remap(output,x.contiguous().view(-1,))
+            return loss, hn
 
 
         
+    @classmethod
+    def repackage(cls,h):
+        """Wraps hidden states in new Variables, to detach them from their history."""
+        if type(h) == torch.Tensor or type(h)==Variable:
+            return Variable(h.detach().data)
+        else:
+            return tuple(cls.repackage(v) for v in h)
+
+
+        
+    def init_hidden(self,b,embedding_dim):
+        weight = next(self.parameters()).data
+        return Variable(weight.new(self._hparams['rnn_layers'],b, embedding_dim).zero_())
+
 
 
 
