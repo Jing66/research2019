@@ -32,7 +32,8 @@ def load_save_alignment(filedir):
         ckpt = torch.load(fname)
         labels, mm = ckpt['label'],ckpt['weights']
         fig, axies =  plt.subplots(math.ceil(mm.shape[0]/2),2,sharex='col',sharey='row',figsize=(20, 15))
-        
+        if math.ceil(mm.shape[0]/2)<2:
+            axies = [axies]
         for l in range(mm.shape[0]):
             ax = axies[math.floor(l/2)][l%2]
             plot_heap_map(ax, mm[l,:,:],labels,labels)

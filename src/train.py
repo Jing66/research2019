@@ -349,7 +349,7 @@ if __name__=="__main__":
     if not args.no_train:
         trainer.train(args.save_dir) 
     if args.visualize:
+        _,_ = trainer.load_ckpt()
         for idx in args.visualize:
-            _,_ = trainer.load_ckpt()
             trainer.attn_visualize(int(idx), args.save_dir)
 
