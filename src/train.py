@@ -1,4 +1,5 @@
 import json
+import sys
 import math
 import torch
 import torch.nn as nn
@@ -214,6 +215,7 @@ class Trainer(object):
             
         # Done -- plot graphs
         utils.plot_train_dev_metrics(train_losses, dev_losses,"loss", savedir+'/losses')
+        utils.plot_train_dev_metrics(np.exp(train_losses),np.exp(dev_losses), "perplexity",savedir+'/perplexity')
         if output_probs:
             utils.plot_train_dev_metrics(train_accs, dev_accs, "accuracy", savedir+'/accuracies')
         self.logger.info('==> Training Done!! best validation loss: %6.4f. Model/log/plots saved in [%s]' %(best_loss, savedir))
@@ -311,6 +313,7 @@ if __name__=="__main__":
     args = parser.parse_args()
     # setup logger, seed, gpu etc
     logger = get_logger(args.log_fname, args.debug, args.save_dir)
+    logger.info("Command line args: $"+(" ").join(sys.argv))
     logger.info("Setting pytorch/numpy random seed to %s"%args.seed)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

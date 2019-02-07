@@ -32,7 +32,7 @@ class BaseLM(nn.Module):
 
         rnn_type = getattr(nn, self._hparams['rnn_type'])
         rnn_layers = self._hparams['rnn_layers']
-        self._rnn = rnn_type(emb_sz,hidden_sz, num_layers=rnn_layers, batch_first=True)
+        self._rnn = rnn_type(emb_sz,hidden_sz, num_layers=rnn_layers, batch_first=True, dropout=self._hparams['dropout'])
 
         # Use Adaptive softmax instead of softmax(Linear) to save GPU memory
         _cluster_sz = 5
@@ -48,27 +48,17 @@ class BaseLM(nn.Module):
         inputs = self._drop(self._embedding(x))
         if hidden is not None:
             hidden = hidden[:,:b,:].contiguous()
-        sos = inputs[torch.arange(b), lengths-1, :]
-        _idx = torch.arange(T-1).repeat(b,1)
-        l = lengths.repeat(T-1,1).t()
-        if is_cuda:
-            l = l.cuda()
-            _idx = _idx.cuda()
-        _idx=torch.where(_idx>=l-1, _idx+1, _idx)
-        input_wo_eos =torch.cat([torch.index_select(a,0,i).unsqueeze(0) for a, i in zip(inputs, _idx) ])
-        inputs = torch.cat([torch.unsqueeze(sos,1),input_wo_eos],dim=1)  # [b,T, embd_sz]
-
-        packed_input = nn.utils.rnn.pack_padded_sequence(inputs[:,:-1,:], lengths-1, batch_first=True)
+        packed_input = nn.utils.rnn.pack_padded_sequence(inputs, lengths-1,batch_first=True)
         packed_output, hn = self._rnn(packed_input,hidden)      
         output, _ = nn.utils.rnn.pad_packed_sequence(packed_output)     # [b,T,hidden]
+        output = torch.transpose(output,0,1).contiguous()
         output_ = output.view(b*(T-1), -1).contiguous()
-        output = self._drop(output_)
         if output_probs:
-            logprob_ = self._decoder_remap.log_prob(output)      # (b*T,)
+            logprob_ = self._decoder_remap.log_prob(output_)      # (b*T,)
             logprob = logprob_.view(b,T-1, -1)
             return logprob, hn
         else:
-            _, loss = self._decoder_remap(output,x[:,1:].contiguous().view(-1,).contiguous())
+            _, loss = self._decoder_remap(output_,x[:,1:].contiguous().view(-1,).contiguous())
             return loss, hn
 
     @classmethod
