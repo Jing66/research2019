@@ -200,5 +200,6 @@ if __name__=='__main__':
     t_l, t_a, d_l, d_a = parse_logs(args.log_files)
     if args.loss:
         plot_train_dev_metrics(t_l, d_l, 'loss', format_dirname(args.save_dir)+'/loss')
+        plot_train_dev_metrics(np.exp(t_l), np.exp(d_l),'perplexity', format_dirname(args.save_dir)+'/perplexity')
     if args.acc:
         plot_train_dev_metrics(t_a, d_a, 'Accuracy', format_dirname(args.save_dir)+'/accuracy')
