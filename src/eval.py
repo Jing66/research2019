@@ -8,7 +8,7 @@ import numpy as np
 
 import utils
 from log_utils import get_logger
-from train import Trainer
+from train import Trainer, BaseLMTrainer
 
 
 if __name__=="__main__":
@@ -42,12 +42,12 @@ if __name__=="__main__":
     _hparams = json.load(open('%s/config.json'%utils.format_dirname(args.ckpt_dir),'r'))
     hparams = utils.update_dict(default_hparams,_hparams)
     hparams['Trainer']['model_output'] = 'logprobs'
-    hparams['Model']['Feature']['SS_prob'] = 1.0
 
     if args.model.lower()=="glomo":
+        hparams['Model']['Feature']['SS_prob'] = 1.0
         trainer = Trainer(hparams,utils.format_dirname(args.data_dir), utils.format_dirname(args.ckpt_dir), logger,args.device, test_only=True)
     elif args.model.lower()=='baselinelm':
-        trainer = BaseLMTrainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.resume),logger,args.device)
+        trainer = BaseLMTrainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.ckpt_dir),logger,args.device, test_only=True)
     else:
         raise ValueError('Model type %s unsupported'%args.model)
 
