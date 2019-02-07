@@ -229,8 +229,6 @@ class Dataset(data.Dataset):
         s += 'Dataset size (#sentences): train--%s, dev--%s, test--%s.'\
                     %(len(self._train),len(self._dev),len(self._test))
         s += '\nVocab size obtained from training set: %s'%self.vocab_sz
-        s += '\ntop 10 frequent words are %s, appeared %s times' \
-                    %(str(list(self._vocab.keys())[3:13]), str(self.w_freq[:10]))
         s += '\nPctg of unk in dev set: %6.3f; in test set: %6.3f' %(100*self.n_unks('dev'), 100*self.n_unks('test'))
 
         alllens = np.array([len(s) for s in self._train+self._test+self._dev])

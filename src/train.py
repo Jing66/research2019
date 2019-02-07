@@ -288,6 +288,33 @@ class BaseLMTrainer(Trainer):
 
 
 
+class ClassifierTrainer(Trainer):
+    def __init__(self, config, datadir,ckpt, _logger=None, gpu=None, test_only=False):
+        super(BaseLMTrainer,self).__init__(config, datadir,ckpt, _logger, gpu, test_only)
+    
+    def accuracy_fn(self, logit, ytrue):
+        _, idx = torch.max(logit, dim=-1)
+        n_correct = torch.sum(idx==ytrue).item()
+        n_total = ytrue.shape[0].item()
+        return n_correct, n_total
+
+    def _build_models(self):
+        self._model = Classifier(self.dataset.vocab_sz, self.config['Model'], self.logger)
+        self.criterion = nn.BCEWithLogitsLoss()
+        self._models = {'model':self._model}
+
+    def forward_pass(self, data, lens,output_probs, kwargs):
+        X, ytrue = data
+        X= torch.autograd.Variable(X, requires_grad=False)
+        lens = torch.autograd.Variable(lens, requires_grad=False)
+        if self._gpu is not None:
+            X = X.cuda()
+            lens = lens.cuda()
+            ytrue = ytrue.cuda()
+        logits= self._model(X, lens)
+        loss = self.criterion(logits, ytrue)
+        acc = self.accuracy_fn(logits,ytrue)
+        return loss, acc, None
 
 
 if __name__=="__main__":

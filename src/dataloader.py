@@ -1,7 +1,8 @@
-import torch.utils.data as data
-from preprocess import Dataset
 import numpy as np
 import torch
+import torch.utils.data as data
+from preprocess import Dataset
+from imdb_preprocess import IMDBData
 
 import pdb
 
@@ -33,19 +34,31 @@ def collate_fn(batch, max_len):
     ''' 
     def _merge(seqs, max_len):
         batch_lens = torch.LongTensor([len(d) for d in seqs])
-        if max_len > batch_lens[0]:
-            max_len = batch_lens[0]
+        if max_len > batch_lens[0].item():
+            max_len = batch_lens[0].item()
         else:
             batch_lens[batch_lens > max_len] = max_len
         padded_seqs = torch.zeros(len(seqs), max_len).long()
         for i, seq in enumerate(seqs):
             end = batch_lens[i]
             padded_seqs[i, :end] = seq[:end]
-        return padded_seqs, batch_lens
+        else:
+            return padded_seqs, batch_lens
 
-    batch.sort(key=lambda x: len(x), reverse=True)
-    seqs, lens = _merge(batch, max_len)
-    return seqs, lens
+    return_target = False
+    if type(batch[0])==tuple:
+        return_target = True
+        batch.sort(key=lambda x: len(x[0]), reverse=True)
+        labels = torch.stack([s[1] for s in batch]).long()
+        batch = [s[0] for s in batch]
+    else:
+        batch.sort(key=lambda x: len(x), reverse=True)
+    seq, lens = _merge(batch, max_len)
+
+    if return_target:
+        return (seq, labels), lens
+    else:
+        return seq, lens
     
 
 
@@ -53,7 +66,7 @@ def collate_fn(batch, max_len):
 
 
 def test(d):
-    ds = Dataset.load_ds(d)
+    ds = IMDBData.load_ds(d)
     for _ in range(5):
         print("Testing train data loader...")
         tl= get_data_loader(ds,"train", 50)
@@ -69,4 +82,4 @@ def test(d):
             pass
 
 if __name__=='__main__':
-    test('data/toy')
+    test('data/imdb_toy')
