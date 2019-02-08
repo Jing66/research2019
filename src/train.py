@@ -111,7 +111,7 @@ class Trainer(object):
         if not os.path.exists(savedir):
             os.makedirs(savedir)
         torch.save({'label':labels, 'weights':attn_wgt},'%s/attn_%d.pkl'%(savedir,idx))
-        self.logger.info("Attention weights for %dth sentence saved in [%s]"%(idx,savedir))
+        self.logger.info("Attention weights for %dth sentence:[%s] saved in [%s]"%(idx,(" ").join(labels),savedir))
     
     
     def forward_pass(self, X, lens, output_probs,kwargs):
@@ -349,7 +349,7 @@ if __name__=="__main__":
     if not args.no_train:
         trainer.train(args.save_dir) 
     if args.visualize:
+        _,_ = trainer.load_ckpt()
         for idx in args.visualize:
-            _,_ = trainer.load_ckpt()
             trainer.attn_visualize(int(idx), args.save_dir)
 

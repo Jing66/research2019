@@ -45,6 +45,7 @@ if __name__=="__main__":
 
     if args.model.lower()=="glomo":
         hparams['Model']['Feature']['SS_prob'] = 1.0
+        hparams['Model']['Feature']['context_sz'] = 1
         trainer = Trainer(hparams,utils.format_dirname(args.data_dir), utils.format_dirname(args.ckpt_dir), logger,args.device, test_only=True)
     elif args.model.lower()=='baselinelm':
         trainer = BaseLMTrainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.ckpt_dir),logger,args.device, test_only=True)

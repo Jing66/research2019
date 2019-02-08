@@ -146,7 +146,7 @@ class LM(nn.Module):
                     logprobs.append(logprob)
                 else:
                     _, loss = self.layers['decoder_remap'](output, x[:(b-n_padding),t+1:t+D+1].contiguous().view(-1))
-                    logprobs.append(loss) 
+                    logprobs.append(loss*torch.sum(lens)) 
 
             # ----- CASE use scheduled sampling
             else:
@@ -178,7 +178,7 @@ class LM(nn.Module):
             # output a tensor of [b,Dx(T-D+1),|V|]
             return torch.cat(logprobs,dim=1)
         else:
-            return sum(logprobs)/len(logprobs)
+            return sum(logprobs)/(torch.sum(lengths)*D)
 
 
 
