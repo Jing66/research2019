@@ -1,8 +1,10 @@
 import json
+import sys
 import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchnlp.metrics import get_token_accuracy
 import numpy as np
 import os
 import argparse
@@ -17,7 +19,7 @@ from baseline_lm import BaseLM
 from graph import Graph
 import utils
 from log_utils import get_logger
-from lossFn import ContextLMLoss, accuracy_fn
+from lossFn import ContextLMLoss
 global logger
 
 
@@ -29,8 +31,8 @@ def calc_acc(logprobs, y):
     - logprobs: [b,T*(D-1),|V|]
     '''
     _, pred = torch.max(logprobs,2)
-    tot_valid, tot_correct = accuracy_fn(pred,y)
-    return float(tot_correct)/tot_valid
+    _, tot_correct, tot_valid = get_token_accuracy(y, pred,ignore_index=PAD)
+    return tot_correct.float()/tot_valid.float()
 
 
 
@@ -109,17 +111,15 @@ class Trainer(object):
         if not os.path.exists(savedir):
             os.makedirs(savedir)
         torch.save({'label':labels, 'weights':attn_wgt},'%s/attn_%d.pkl'%(savedir,idx))
-        self.logger.info("Attention weights for %dth sentence saved in [%s]"%(idx,savedir))
+        self.logger.info("Attention weights for %dth sentence:[%s] saved in [%s]"%(idx,(" ").join(labels),savedir))
     
     
     def forward_pass(self, X, lens, output_probs,kwargs):
         ''' run one forward pass of the model, return accuracy and loss'''
-        X = X[:,1:]             # ignore SOS
-        lens = lens - 1
         y_pred = self._model(X, lens, output_probs)         # X:[b,T], y_pred:[b,T*D,|V|]
         if y_pred.dim():
-            loss = self.criterion(torch.transpose(y_pred,1,2), X)
-            acc = self.accuracy_fn(y_pred, X)
+            loss = self.criterion(torch.transpose(y_pred,1,2), X[:,1:])
+            acc = self.accuracy_fn(y_pred, X[:,1:]).item()
             return loss, acc, None
         else:
             loss = y_pred
@@ -155,7 +155,7 @@ class Trainer(object):
             loss, acc, kwargs = self.forward_pass(X, lens, output_probs,kwargs)
 
             self.logger.debug('loss per batch = %f'%loss)
-            losses+=loss.detach().cpu().item()
+            losses+=loss.detach().item()
             accuracies += acc
 
             nn.utils.clip_grad_norm_(self._model.parameters(), 2)  # gradient clipping
@@ -215,6 +215,7 @@ class Trainer(object):
             
         # Done -- plot graphs
         utils.plot_train_dev_metrics(train_losses, dev_losses,"loss", savedir+'/losses')
+        utils.plot_train_dev_metrics(np.exp(train_losses),np.exp(dev_losses), "perplexity",savedir+'/perplexity')
         if output_probs:
             utils.plot_train_dev_metrics(train_accs, dev_accs, "accuracy", savedir+'/accuracies')
         self.logger.info('==> Training Done!! best validation loss: %6.4f. Model/log/plots saved in [%s]' %(best_loss, savedir))
@@ -238,7 +239,7 @@ class Trainer(object):
 
                 loss, acc,kwargs = self.forward_pass(X, lens, True, kwargs)
                 accuracies += acc
-                losses += loss.detach().cpu().item()
+                losses += loss.detach().item()
         loss_per_epoch = losses/(step+1)
         return loss_per_epoch, accuracies/(step+1)
 
@@ -266,14 +267,12 @@ class BaseLMTrainer(Trainer):
         return {"hidden":None}
     
     def forward_pass(self, X, lens,output_probs, kwargs):
-        X = X[:,1:]
-        lens = lens-1
         last_hidden = kwargs['hidden']
         acc = 0.0
         if output_probs:
             logprobs, hidden  = self._model(X, lens, last_hidden, output_probs)         # X:[b,T], y_pred:[b,T*D,|V|]
-            loss = self.criterion(torch.transpose(logprobs,1,2), X)
-            acc = self.accuracy_fn(logprobs, X)
+            loss = self.criterion(torch.transpose(logprobs,1,2), X[:,1:])
+            acc = self.accuracy_fn(logprobs, X[:,1:])
         else:
             loss, hidden = self._model(X, lens, last_hidden, output_probs)
         hn = BaseLM.repackage(hidden)
@@ -341,6 +340,7 @@ if __name__=="__main__":
     args = parser.parse_args()
     # setup logger, seed, gpu etc
     logger = get_logger(args.log_fname, args.debug, args.save_dir)
+    logger.info("Command line args: $"+(" ").join(sys.argv))
     logger.info("Setting pytorch/numpy random seed to %s"%args.seed)
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

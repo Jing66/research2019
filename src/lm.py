@@ -90,12 +90,9 @@ class LM(nn.Module):
         # feature predictor -- encoder
         input_f = self.drop(self.layers['emb'](x)) # [b,T,embd_sz]
         mask = utils.get_mask_3d(x)       # (b,T,T)
-        if is_cuda:
-            mask = mask.cuda()
         embedded = input_f.clone()
         # compute graph affinity matrix
         G = self.G(embedded, mask)                #(b,L,T,T)
-        # pdb.set_trace()
 
         for l in range(1, self._hparams['n_layers']+1):
             G_l = G[:,l-1,:,:]  #(b,T,T)
@@ -112,8 +109,6 @@ class LM(nn.Module):
 
         # ----------------------- decoder -- input_f: [b,T,hidden] -----------------
         logprobs = []
-        next_in = embedded[torch.arange(b),lengths-1,:]      # input to decoder at t0: <EOS>
-        n_padding= 0
         # scheduled-sampling
         p_ss = self._hparams['Feature']['SS_prob']      # with prob p_ss, use the predicted word as input
 
@@ -123,65 +118,65 @@ class LM(nn.Module):
             n_padding = torch.sum(lens<=timestep)
             return n_padding.detach().item()
 
-        for t in range(T-D+1):
+        for t in range(T-D):
+            # pdb.set_trace()
             h0_t = input_f[:,t,: ]                # init h0 of decoder at t: f_t (b,hidden_sz)
 
             # ------ CASE teacher forcing, use packed_padded_seq to speed up
             if p_ss == 0.0:
-                if t>0:
-                    inputs = embedded[:, t-1:t-1+D,: ]   # inputs: [b,D,hidden]
+                inputs = embedded[:, t:t+D,: ]   # inputs: [b,D,hidden]
+                _tmp = torch.tensor([D],device=x.device, dtype=torch.int64)
+                if output_probs:
+                    n_padding = _select_by_length(t+1,lengths)
+                    lens = torch.min(lengths[:(b-n_padding)]-t-1, _tmp.expand(b-n_padding)).detach()
                 else:
-                    inputs = torch.cat((torch.unsqueeze(next_in,1), embedded[:,:D-1,: ]),1)
-                n_padding = _select_by_length(t,lengths)
+                    # AdaptiveLogSoftmaxLoss doesn't support ignore_idx, so we must make sure in corresponsing ytrue there's no pad
+                    n_padding = _select_by_length(t+D, lengths)
+                    lens = _tmp.expand(b-n_padding).detach()
                 inputs, h0_t = inputs[:(b-n_padding)], h0_t[:(b-n_padding)]
-                _tmp = torch.tensor([D]).type(torch.LongTensor)
-                if is_cuda:
-                    _tmp = _tmp.cuda()
-                lens = torch.min(lengths[:(b-n_padding)]-t, _tmp.expand(inputs.shape[0])).detach()
                 packed_input = nn.utils.rnn.pack_padded_sequence(inputs, lens, batch_first=True)
                 packed_output, _ = self.layers['decoder_rnn'](packed_input, torch.unsqueeze(h0_t,0).contiguous())      
                 output, _ = nn.utils.rnn.pad_packed_sequence(packed_output)     # [b,D,hidden]
                 output = output.transpose(0,1).contiguous().view((b-n_padding)*D,-1).contiguous()
                 if output_probs:
                     logprob = self.layers['decoder_remap'].log_prob(output).view((b-n_padding),D,-1)          #[b,D, |V|]
-                    logprob = F.pad(logprob, (0,0,0,0,0,n_padding))
+                    logprob = F.pad(logprob, (0,0,0,0,0,n_padding),value=float('-inf'))
                     logprobs.append(logprob)
                 else:
-                    _, loss = self.layers['decoder_remap'](output, x[:(b-n_padding),t:t+D].contiguous().view(-1))
-                    logprobs.append(loss) 
+                    _, loss = self.layers['decoder_remap'](output, x[:(b-n_padding),t+1:t+D+1].contiguous().view(-1))
+                    logprobs.append(loss*torch.sum(lens)) 
 
             # ----- CASE use scheduled sampling
             else:
                 next_hidden = h0_t
-                if t>0:
-                    next_ = embedded[:,t-1,:]     # input to decoder at t: x_{t-1}
-                    n_padding = _select_by_length(t, lengths)       # next_in: [b_, embd_sz]
-                    next_in, next_hidden = next_[:(b-n_padding)], h0_t[:(b-n_padding)]
+                next_ = embedded[:,t,:]     # input to decoder at t: x_{t-1}
+                n_padding = _select_by_length(t+1, lengths)       # next_in: [b_, embd_sz]
+                next_in, next_hidden = next_[:(b-n_padding)], h0_t[:(b-n_padding)]
                 next_hidden = torch.unsqueeze(next_hidden,0).contiguous()
                 xhat_t = []
                 for d in range(D):
                     next_in = torch.unsqueeze(next_in,1).contiguous()
                     _,h = self.layers['decoder_rnn'](next_in, next_hidden)   # hidden state at d step: [1, b_, hidden_sz]
                     xhat_t_d_ = self.layers['decoder_remap'].log_prob(torch.squeeze(h,0))         # output logits: [b,|V|]
-                    xhat_t_d = F.pad(xhat_t_d_, ( 0,0,0,n_padding))
+                    xhat_t_d = F.pad(xhat_t_d_, ( 0,0,0,n_padding),value=float('-inf'))
                     xhat_t.append(xhat_t_d)
                     _, idx = xhat_t_d.max(-1)   # input to decoder at (d+1) step  (b_,)
                     if torch.rand(1).item() > p_ss:
-                        next_ = embedded[:,t+d,:]
+                        next_ = embedded[:,t+d+1,:]
                     else:
                         next_ = self.drop(self.layers['emb'](idx))     # [b_,embd_sz]
                     
-                    n_padding = _select_by_length(t+d+1, lengths)
+                    n_padding = _select_by_length(t+d+2, lengths)
                     next_in = next_[: (b - n_padding)]
                     next_hidden = h[:,:(b-n_padding),:]
             
                 logprob = torch.stack(xhat_t,dim=1)    # [b,D,|V|]
                 logprobs.append(logprob)
-        if output_probs:
+        if output_probs or p_ss>0:
             # output a tensor of [b,Dx(T-D+1),|V|]
             return torch.cat(logprobs,dim=1)
         else:
-            return sum(logprobs)/len(logprobs)
+            return sum(logprobs)/(torch.sum(lengths)*D)
 
 
 

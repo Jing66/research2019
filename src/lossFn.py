@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torchnlp.metrics import get_token_accuracy
 import pdb
 
 PAD = 0
@@ -39,13 +40,9 @@ class ContextLMLoss(nn.Module):
         tot_valids = 0
         for t in range(T-D+1):
             Xhat_t = Xhat[:, t*D:(t+1)*D]
-            num_valids, num_correct = accuracy_fn(Xhat_t, X[:,t:t+D])
+            _, num_correct, num_valids = get_token_accuracy(X[:,t:t+D],Xhat_t, ignore_index=PAD)
             tot_correct += num_correct
             tot_valids += num_valids
-        return tot_correct/(tot_valids)
+        return tot_correct.float()/tot_valids.float()
 
 
-def accuracy_fn(Xhat, X):
-    valids = X.ne(PAD)
-    num_correct = torch.sum(torch.masked_select(Xhat,valids) == torch.masked_select(X,valids))
-    return torch.sum(valids).item(), num_correct.item()
