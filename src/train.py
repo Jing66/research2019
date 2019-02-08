@@ -14,26 +14,17 @@ import pdb
 
 from preprocess import Dataset
 from dataloader import get_data_loader 
-from lm import LM
-from baseline_lm import BaseLM
-from graph import Graph
-import utils
-from log_utils import get_logger
-from lossFn import ContextLMLoss
+from models.lm import LM
+from models.baseline_lm import BaseLM
+from models.graph import Graph
+from models.classif import Classifier
+from util import utils
+from util.log_utils import get_logger
+from models.lossFn import ContextLMLoss
 global logger
 
 
 PAD=0
-
-
-def calc_acc(logprobs, y):
-    '''
-    - logprobs: [b,T*(D-1),|V|]
-    '''
-    _, pred = torch.max(logprobs,2)
-    _, tot_correct, tot_valid = get_token_accuracy(y, pred,ignore_index=PAD)
-    return tot_correct.float()/tot_valid.float()
-
 
 
 class Trainer(object):
@@ -113,6 +104,14 @@ class Trainer(object):
         torch.save({'label':labels, 'weights':attn_wgt},'%s/attn_%d.pkl'%(savedir,idx))
         self.logger.info("Attention weights for %dth sentence:[%s] saved in [%s]"%(idx,(" ").join(labels),savedir))
     
+
+    def calc_acc(logprobs, y):
+        '''
+        - logprobs: [b,T*(D-1),|V|]
+        '''
+        _, pred = torch.max(logprobs,2)
+        _, tot_correct, tot_valid = get_token_accuracy(y, pred,ignore_index=PAD)
+        return tot_correct.float()/tot_valid.float()
     
     def forward_pass(self, X, lens, output_probs,kwargs):
         ''' run one forward pass of the model, return accuracy and loss'''
@@ -288,18 +287,51 @@ class BaseLMTrainer(Trainer):
 
 
 class ClassifierTrainer(Trainer):
-    def __init__(self, config, datadir,ckpt, _logger=None, gpu=None, test_only=False):
+    def __init__(self, config, datadir, ckpt,graph_ckpt, _logger=None, gpu=None, test_only=False):
+        self.graph_ckpt = graph_ckpt
         super(BaseLMTrainer,self).__init__(config, datadir,ckpt, _logger, gpu, test_only)
     
-    def accuracy_fn(self, logit, ytrue):
+    def calc_acc(logit, ytrue):
         _, idx = torch.max(logit, dim=-1)
         n_correct = torch.sum(idx==ytrue).item()
         n_total = ytrue.shape[0].item()
         return n_correct, n_total
 
+    def build(self, datadir, test_only=False):
+        self.logger.info("Building trainer class %s" %self.__class__.__name__)
+        self.logger.info("Loading data from [%s]..." %(datadir))
+        self.dataset = IMDBData.load_ds(datadir, test_only)
+        self.logger.info(str(self.dataset))
+
+        # build model, loss, optimizer
+        self.logger.info("Constructing model with hparams:\n%s" %(json.dumps(self.config['Model'],indent=4) ))
+
+        self._build_models()
+
+        self.logger.info('Constructing optimizer: %s' %self.config['Trainer']['optimizer'])
+        optimizer = getattr(torch.optim, self.config['Trainer']['optimizer'])
+        self._opt = optimizer(self._model.parameters(),self.config['Trainer']['lr'])
+        params = [(name, p.shape) for name, p in self._model.named_parameters()]
+        self.logger.debug('Optimizing parameters: %s'%str(params))
+
     def _build_models(self):
-        self._model = Classifier(self.dataset.vocab_sz, self.config['Model'], self.logger)
+        # load frozen graph
+        self._graph = Graph(self.config['Model'], self.logger)
+        if not self.graph_ckpt:
+            raise Exception("Must provide a trained graph for downstreaming task")
+        if self._gpu is None:
+            checkpoint = torch.load("%s/exprt.ckpt"%self._ckpt, map_location=lambda storage, loc: storage)
+        else:
+            checkpoint = torch.load("%s/exprt.ckpt"%self._ckpt)
+        try:
+            self._graph.load_state_dict(checkpoint['graph'])
+        except Exception as e:
+            logger.error(e)
+            logger.error("Failed to load graph")
+        # build classifier model
+        self._model = Classifier(self.dataset.vocab_sz, self.config['Model'], self.graph, self.logger, embeddings)
         self.criterion = nn.BCEWithLogitsLoss()
+        self.accuracy_fn = calc_acc
         self._models = {'model':self._model}
 
     def forward_pass(self, data, lens,output_probs, kwargs):
@@ -331,6 +363,7 @@ if __name__=="__main__":
                         help='path to save trained model')
     parser.add_argument('-v','--visualize',nargs='+', default=None, 
                         help='indices for selecting visualizations')
+    parser.add_argument('-g','--graph_dir', default=None, help='ckpt dir to load graph')
     parser.add_argument('--no-train', dest='no_train', default=False, action='store_true')
     parser.add_argument('--device',type=int, default=None)
     parser.add_argument('--seed', default=999, type=int, help="torch random seed")
@@ -370,6 +403,10 @@ if __name__=="__main__":
         trainer = Trainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.resume),logger,args.device)
     elif args.model.lower()=='baselinelm':
         trainer = BaseLMTrainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.resume),logger,args.device)
+    elif args.model.lower()=='imdbclassifier':
+        trainer = ClassifierTrainer(hparams,  utils.format_dirname(args.data_dir), 
+                    utils.format_dirname(args.args.resume),  
+                    utils.format_dirname(args.graph_dir), logger, args.device) 
     else:
         raise ValueError('Model type %s unsupported'%args.model)
 

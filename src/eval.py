@@ -6,8 +6,8 @@ from datetime import timedelta
 import os
 import numpy as np
 
-import utils
-from log_utils import get_logger
+from util import utils
+from util.log_utils import get_logger
 from train import Trainer, BaseLMTrainer
 
 

@@ -7,7 +7,7 @@ from nltk.tokenize import word_tokenize
 import pickle
 import json
 
-from log_utils import  get_logger
+from util.log_utils import  get_logger
 global logger
 import pdb
 from preprocess import Dataset, normalize_str
@@ -24,6 +24,7 @@ LABELS = {'pos':1,'neg':0}
 class IMDBData(Dataset):
     def __init__(self,train=[], dev=[], test=[],
                     vocab={'PAD':PAD, 'EOS':EOS,'START':START,'UNK':UNK}, w_freq=None):
+        self.embd
         super(IMDBData,self).__init__(train,dev,test,vocab,w_freq)
 
 
@@ -105,8 +106,19 @@ class IMDBData(Dataset):
         with open('%s/vocab.json'%d, "r") as read_file:
             vocab = json.load(read_file)
         w_freq = np.load('%s/w_freq.npy'%d)
-        return IMDBData(train,dev,test, vocab, w_freq)
 
+        ds = IMDBData(train,dev,test, vocab, w_freq)
+        ds.load_embedding(d)
+        return ds
+
+    def load_embedding(self, d):
+        '''load embedding matrix if there's any'''
+        try:
+            self.embd = torch.load('%s'%d)
+        except IOError:
+            print("Failed to load embedding")
+            return None
+    
     def __str__(self):
         s = '===== INFO of IMDB Dataset =====\n'
         s += 'Dataset size (#sentences): train--%s, dev--%s, test--%s.'\
@@ -115,6 +127,8 @@ class IMDBData(Dataset):
         alllens = np.array([len(s) for (s,_) in self._train+self._test+self._dev])
         s += '\nDataset sentence length info: max--%s, min--%s, mean--%s, median--%s'\
                 %(alllens.max(), alllens.min(), np.mean(alllens), np.median(alllens))
+        if self.embd:
+            s += 'Dataset contains embeddings'
         return s
         
 
