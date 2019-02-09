@@ -44,6 +44,7 @@ def normalize_str(s):
 
 class Dataset(data.Dataset):
     def __init__(self, train=[], dev=[], test=[] ,vocab={'PAD':PAD, 'EOS':EOS,'START':START,'UNK':UNK}, w_freq=None):
+        self.embd = None
         self._train = train
         self._test = test
         self._dev = dev
@@ -176,6 +177,15 @@ class Dataset(data.Dataset):
             json.dump(self._vocab,f)
         np.save('%s/w_freq'%d, self.w_freq)
 
+
+    def load_embedding(self, d):
+        '''load embedding matrix if there's any'''
+        try:
+            self.embd = torch.load('%s/embd.pt'%d)
+        except IOError:
+            print("Failed to load embedding")
+            return None
+
     @classmethod
     def load_ds(cls, d, test_only=False):
         '''test_only: bool. If true, only load test dataset'''
@@ -193,7 +203,9 @@ class Dataset(data.Dataset):
         with open('%s/vocab.json'%d, "r") as read_file:
             vocab = json.load(read_file)
         w_freq = np.load('%s/w_freq.npy'%d)
-        return Dataset(train,dev,test, vocab, w_freq)
+        ds = Dataset(train,dev,test, vocab, w_freq) 
+        ds.load_embedding(d)
+        return ds
 
 
     def cutoff_vocab(self, n_clusters):

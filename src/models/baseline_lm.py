@@ -18,7 +18,7 @@ class BaseLM(nn.Module):
         self._V = vocab_sz
         self.build(vocab_cutoff)
         # if embedding weights are provided
-        if embd_weights:
+        if embd_weights is not None:
             self._embedding.weight = nn.Parameter(embd_weights)
         self.apply(init_weights)
     

@@ -74,7 +74,7 @@ def default_hparams(model='glomo'):
                 }
             }
         '''
-    elif model.lower()=='imdbclassifier':
+    elif model.lower()=='imdb':
          hparam_str = '''
             {
                 "Trainer": {
@@ -89,13 +89,15 @@ def default_hparams(model='glomo'):
                 },
                 "Model":{
                     "max_len": 60, 
-                    "attn_heads":1,
-                    "dense_sz": 300,
                     "embd_sz": 400,
+                    "n_layers": 2,
                     "dropout": 0.0, 
-                    "hidden_sz": 500 ,
-                    "rnn_type": "GRU",
-                    "n_layers": 2
+                    "Feature":{
+                        "attn_heads":1,
+                        "dense_sz": 600,
+                        "hidden_sz": 500 ,
+                        "rnn_type": "GRU"
+                    }
              }
          }
          
@@ -122,7 +124,7 @@ def get_mask_2d(sequences_lengths):
     max_length = torch.max(sequences_lengths)
     mask = torch.zeros(batch_size, max_length, dtype=torch.uint8)
     mask[torch.arange(batch_size), :max_length] = 1
-    return mask.detach()
+    return torch.autograd.Variable(mask.detach())
 
 def get_mask_3d(seq_batch, mask_idx=0):
     batch_sz = seq_batch.size()[0]

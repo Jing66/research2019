@@ -9,6 +9,7 @@ import numpy as np
 from util import utils
 from util.log_utils import get_logger
 from train import Trainer, BaseLMTrainer
+from downstream_train import ClassifierTrainer
 
 
 if __name__=="__main__":

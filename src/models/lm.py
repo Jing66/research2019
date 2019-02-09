@@ -27,7 +27,7 @@ class LM(nn.Module):
         self.layers = {}
         self.build(vocab_cutoff)
         # if embedding weights are provided
-        if embd_weights:
+        if embd_weights is not None:
             self.layers['emb'].weight = nn.Parameter(embd_weights)
         self.blocks = nn.ModuleList(list(self.layers.values()))
         self.apply(init_weights)

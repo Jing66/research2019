@@ -112,13 +112,6 @@ class IMDBData(Dataset):
         ds.load_embedding(d)
         return ds
 
-    def load_embedding(self, d):
-        '''load embedding matrix if there's any'''
-        try:
-            self.embd = torch.load('%s'%d)
-        except IOError:
-            print("Failed to load embedding")
-            return None
     
     def __str__(self):
         s = '===== INFO of IMDB Dataset =====\n'
@@ -128,7 +121,7 @@ class IMDBData(Dataset):
         alllens = np.array([len(s) for (s,_) in self._train+self._test+self._dev])
         s += '\nDataset sentence length info: max--%s, min--%s, mean--%s, median--%s'\
                 %(alllens.max(), alllens.min(), np.mean(alllens), np.median(alllens))
-        if self.embd:
+        if self.embd is not None:
             s += 'Dataset contains embeddings'
         return s
         

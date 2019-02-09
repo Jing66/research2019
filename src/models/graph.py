@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from util import utils
 import pdb
 EPSILON = 1e-9
-SOFTMAX_MASK = 1e-20
+SOFTMAX_MASK = -1e30
 
 class Graph(nn.Module):
     def __init__(self, hparams, logger=None):
@@ -73,7 +73,7 @@ class Graph(nn.Module):
                 Z = torch.sum(G_l_unnorm, dim=1, keepdim=True)
                 G_l = G_l_unnorm/Z
             elif sparse_fn == 'softmax':
-                G_l_unnorm.masked_fill_(mask==0,softmax_mask)
+                G_l_unnorm.masked_fill_(mask==0,SOFTMAX_MASK)
                 G_l = F.softmax(G_l_unnorm, dim=1)
             G_.append(G_l)
         G = torch.stack(G_, dim=1) # (b,L,T,T)
