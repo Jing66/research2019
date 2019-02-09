@@ -4,7 +4,7 @@ import torch.nn.functional as F
 from util import utils
 import pdb
 EPSILON = 1e-9
-
+SOFTMAX_MASK = 1e-20
 
 class Graph(nn.Module):
     def __init__(self, hparams, logger=None):
@@ -56,13 +56,25 @@ class Graph(nn.Module):
             ql = self.layers['linear_q_%d'%l](torch.transpose(qi,1,2))      # (b,T,n_linear_feat)
             # bias = self.graph_bias
             bias = self.graph_bias[l]
-            # this computes: G_l[b,i,j] = [RELU(dot(kl[b,i,:],ql[b,j,:]+b)]^2
-            sparse_fn = getattr(F, self._hparams['Graph']['sparsity_fn'])
-            G_l_unnorm = (sparse_fn(kl@torch.transpose(ql,1,2)+bias))**2       # (b,T,T)
+            sparse_fn = self._hparams['Graph']['sparsity_fn']
+            G_l_unnorm = kl@torch.transpose(ql,1,2)+bias
             mask = pad_mask & subseq_mask
-            G_l_unnorm.masked_fill_(mask==0,0.0)
-            Z = torch.sum(G_l_unnorm, dim=1, keepdim=True)                  #(b,T,T)
-            G_l = G_l_unnorm/(Z+EPSILON)                    # Z might be zero since RELU sets  all neg. values to 0
+            # this computes: G_l[b,i,j] = [fn(dot(kl[b,i,:],ql[b,j,:]+b)]^2
+            if sparse_fn == 'leaky_relu':
+                G_l_unnorm = (F.leaky_relu(G_l_unnorm))**2       # (b,T,T)
+                G_l_unnorm.masked_fill_(mask==0,0.0)
+                G_l_unnorm += EPSILON
+                Z = torch.sum(G_l_unnorm, dim=1, keepdim=True)                  #(b,T,T)
+                G_l = G_l_unnorm/Z                  # Z might be zero since RELU sets  all neg. values to 0
+            elif sparse_fn == "relu":
+                G_l_unnorm = (F.relu(G_l_unnorm))**2
+                G_l_unnorm.masked_fill_(mask==0,0.0)
+                G_l_unnorm += EPSILON
+                Z = torch.sum(G_l_unnorm, dim=1, keepdim=True)
+                G_l = G_l_unnorm/Z
+            elif sparse_fn == 'softmax':
+                G_l_unnorm.masked_fill_(mask==0,softmax_mask)
+                G_l = F.softmax(G_l_unnorm, dim=1)
             G_.append(G_l)
         G = torch.stack(G_, dim=1) # (b,L,T,T)
         return G

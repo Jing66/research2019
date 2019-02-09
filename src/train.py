@@ -13,6 +13,7 @@ from datetime import timedelta
 import pdb
 
 from preprocess import Dataset
+from imdb_preprocess import IMDBData
 from dataloader import get_data_loader 
 from models.lm import LM
 from models.baseline_lm import BaseLM
@@ -113,8 +114,14 @@ class Trainer(object):
         _, tot_correct, tot_valid = get_token_accuracy(y, pred,ignore_index=PAD)
         return tot_correct.float()/tot_valid.float()
     
-    def forward_pass(self, X, lens, output_probs,kwargs):
+    def forward_pass(self, data, data_lens, output_probs,kwargs):
         ''' run one forward pass of the model, return accuracy and loss'''
+        X= torch.autograd.Variable(data, requires_grad=False)
+        lens = torch.autograd.Variable(data_lens, requires_grad=False)
+        if self._gpu is not None:
+            X = X.cuda()
+            lens = lens.cuda()
+
         y_pred = self._model(X, lens, output_probs)         # X:[b,T], y_pred:[b,T*D,|V|]
         if y_pred.dim():
             loss = self.criterion(torch.transpose(y_pred,1,2), X[:,1:])
@@ -144,14 +151,9 @@ class Trainer(object):
         kwargs = self.forward_args()
         losses, accuracies = 0,0
         for step, (data, data_lens) in enumerate(data_iter):
-            X = torch.autograd.Variable(data, requires_grad=False)
-            lens = torch.autograd.Variable(data_lens, requires_grad=False)
-            if self._gpu is not None:
-                X = X.cuda()
-                lens = lens.cuda()
             self._opt.zero_grad()
 
-            loss, acc, kwargs = self.forward_pass(X, lens, output_probs,kwargs)
+            loss, acc, kwargs = self.forward_pass(data, data_lens, output_probs,kwargs)
 
             self.logger.debug('loss per batch = %f'%loss)
             losses+=loss.detach().item()
@@ -171,7 +173,7 @@ class Trainer(object):
     
         if  math.isnan(loss_per_epoch):
             self.logger.error("Get NaN loss for epoch %d-- exiting" %epoch)
-            System.exit(1)
+            Sys.exit(1)
 
         return loss_per_epoch, acc_per_epoch
 
@@ -181,7 +183,7 @@ class Trainer(object):
         # training steps
         start_epoch, best_loss = self.load_ckpt()
         save_period = self.config['Trainer']['save_period']
-        output_probs = True if self.config['Trainer']['model_output'] == 'logprobs' else False
+        output_probs = True if self.config['Trainer'].get('model_output',None) == 'logprobs' else False
         train_losses, dev_losses, train_accs, dev_accs  = [], [], [], []
         self.logger.info('Start training with best_loss %6.4f, \nhparams:\n %s'%(best_loss, json.dumps(hparams['Trainer'], indent=4)))
         for epoch in range(start_epoch, start_epoch + self.config['Trainer']['epoch']):
@@ -230,13 +232,8 @@ class Trainer(object):
         kwargs = self.forward_args()
         with torch.no_grad():
             for step, (data, data_lens) in enumerate(data_iter_eval):
-                X= torch.autograd.Variable(data, requires_grad=False)
-                lens = torch.autograd.Variable(data_lens, requires_grad=False)
-                if self._gpu is not None:
-                    X = X.cuda()
-                    lens = lens.cuda()
 
-                loss, acc,kwargs = self.forward_pass(X, lens, True, kwargs)
+                loss, acc,kwargs = self.forward_pass(data, data_lens, True, kwargs)
                 accuracies += acc
                 losses += loss.detach().item()
         loss_per_epoch = losses/(step+1)
@@ -265,7 +262,12 @@ class BaseLMTrainer(Trainer):
     def forward_args(self):
         return {"hidden":None}
     
-    def forward_pass(self, X, lens,output_probs, kwargs):
+    def forward_pass(self, data, data_lens,output_probs, kwargs):
+        X= torch.autograd.Variable(data, requires_grad=False)
+        lens = torch.autograd.Variable(data_lens, requires_grad=False)
+        if self._gpu is not None:
+            X = X.cuda()
+            lens = lens.cuda()
         last_hidden = kwargs['hidden']
         acc = 0.0
         if output_probs:
@@ -289,9 +291,9 @@ class BaseLMTrainer(Trainer):
 class ClassifierTrainer(Trainer):
     def __init__(self, config, datadir, ckpt,graph_ckpt, _logger=None, gpu=None, test_only=False):
         self.graph_ckpt = graph_ckpt
-        super(BaseLMTrainer,self).__init__(config, datadir,ckpt, _logger, gpu, test_only)
+        super(ClassifierTrainer,self).__init__(config, datadir,ckpt, _logger, gpu, test_only)
     
-    def calc_acc(logit, ytrue):
+    def calc_acc(self, logit, ytrue):
         _, idx = torch.max(logit, dim=-1)
         n_correct = torch.sum(idx==ytrue).item()
         n_total = ytrue.shape[0].item()
@@ -316,23 +318,32 @@ class ClassifierTrainer(Trainer):
 
     def _build_models(self):
         # load frozen graph
-        self._graph = Graph(self.config['Model'], self.logger)
         if not self.graph_ckpt:
             raise Exception("Must provide a trained graph for downstreaming task")
+        graph_hparams = json.load(open('%s/config.json'%self.graph_ckpt,'r'))
+        self.config['Model']= utils.update_dict(self.config['Model'],graph_hparams['Model'])
+        del self.config['Model']['Feature']
+        logger.info("Complete hparams with graph:\n%s"%(json.dumps(self.config['Model'],indent=4)))
+        self._graph = Graph(self.config['Model'], self.logger)
         if self._gpu is None:
-            checkpoint = torch.load("%s/exprt.ckpt"%self._ckpt, map_location=lambda storage, loc: storage)
+            checkpoint = torch.load("%s/exprt.ckpt"%self.graph_ckpt, map_location=lambda storage, loc: storage)
         else:
-            checkpoint = torch.load("%s/exprt.ckpt"%self._ckpt)
+            checkpoint = torch.load("%s/exprt.ckpt"%self.graph_ckpt)
         try:
             self._graph.load_state_dict(checkpoint['graph'])
         except Exception as e:
             logger.error(e)
             logger.error("Failed to load graph")
         # build classifier model
-        self._model = Classifier(self.dataset.vocab_sz, self.config['Model'], self.graph, self.logger, embeddings)
+        self._model = Classifier(self.dataset.vocab_sz, self.config['Model'],
+                self.dataset.n_class, self._graph, self.logger, self.dataset.embd)
         self.criterion = nn.BCEWithLogitsLoss()
-        self.accuracy_fn = calc_acc
+        self.accuracy_fn = self.calc_acc
         self._models = {'model':self._model}
+
+
+    def forward_args(self):
+        return {'hidden': None}
 
     def forward_pass(self, data, lens,output_probs, kwargs):
         X, ytrue = data
@@ -342,21 +353,21 @@ class ClassifierTrainer(Trainer):
             X = X.cuda()
             lens = lens.cuda()
             ytrue = ytrue.cuda()
-        logits= self._model(X, lens)
+        pdb.set_trace()
+        logits, hidden = self._model(X, lens, kwargs['hidden'])
         loss = self.criterion(logits, ytrue)
         acc = self.accuracy_fn(logits,ytrue)
-        return loss, acc, None
+        return loss, acc, {"hidden":hidden}
 
 
 if __name__=="__main__":
     parser = argparse.ArgumentParser(description='Train a model')
     parser.add_argument('model', default="GLoMo", help="which model to train")
+    parser.add_argument('data_dir', help='path to data folder')
     parser.add_argument('-c','--config', default=None,
                         help='path to config file, default ./experiment/toy_config.json')
     parser.add_argument('-r', '--resume', default=None, type=str, 
                         help='path to last checkpoint model')
-    parser.add_argument('-d', '--data_dir', default='data/toy', 
-                        help='path to data folder')
     parser.add_argument('-l', '--log_fname', default='train', 
                         help='generate logs in fname.log')
     parser.add_argument('-s', '--save_dir', default='experiment/test', 
@@ -405,7 +416,7 @@ if __name__=="__main__":
         trainer = BaseLMTrainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.resume),logger,args.device)
     elif args.model.lower()=='imdbclassifier':
         trainer = ClassifierTrainer(hparams,  utils.format_dirname(args.data_dir), 
-                    utils.format_dirname(args.args.resume),  
+                    utils.format_dirname(args.resume),  
                     utils.format_dirname(args.graph_dir), logger, args.device) 
     else:
         raise ValueError('Model type %s unsupported'%args.model)

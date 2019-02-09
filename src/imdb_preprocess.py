@@ -24,7 +24,8 @@ LABELS = {'pos':1,'neg':0}
 class IMDBData(Dataset):
     def __init__(self,train=[], dev=[], test=[],
                     vocab={'PAD':PAD, 'EOS':EOS,'START':START,'UNK':UNK}, w_freq=None):
-        self.embd
+        self.embd=None
+        self.n_class = 2
         super(IMDBData,self).__init__(train,dev,test,vocab,w_freq)
 
 

@@ -74,6 +74,32 @@ def default_hparams(model='glomo'):
                 }
             }
         '''
+    elif model.lower()=='imdbclassifier':
+         hparam_str = '''
+            {
+                "Trainer": {
+                    "save_period": 7,
+                    "epoch": 30,
+                    "lr": 0.0001,
+                    "train_batch_sz": 50,
+                    "eval_batch_sz": 10,
+                    "optimizer": "Adam",
+                    "total_samples":500000,
+                    "n_workers": 6
+                },
+                "Model":{
+                    "max_len": 60, 
+                    "attn_heads":1,
+                    "dense_sz": 300,
+                    "embd_sz": 400,
+                    "dropout": 0.0, 
+                    "hidden_sz": 500 ,
+                    "rnn_type": "GRU",
+                    "n_layers": 2
+             }
+         }
+         
+         '''
     else:
         raise ValueError('Model type %s has no default hparams'%model)
     return json.loads(hparam_str)
@@ -91,12 +117,12 @@ def get_free_gpu():
     return idx, int(gpu_df.iloc[idx]['memory.free'])
 
 
-def get_mask_2d(sequences_batch, sequences_lengths):
-    batch_size = sequences_batch.size()[0]
+def get_mask_2d(sequences_lengths):
+    batch_size = sequences_lengths.size()[0]
     max_length = torch.max(sequences_lengths)
-    mask = torch.ones(batch_size, max_length, dtype=torch.uint8)
-    mask[sequences_batch[:, :max_length] == 0] = 0
-    return mask
+    mask = torch.zeros(batch_size, max_length, dtype=torch.uint8)
+    mask[torch.arange(batch_size), :max_length] = 1
+    return mask.detach()
 
 def get_mask_3d(seq_batch, mask_idx=0):
     batch_sz = seq_batch.size()[0]
