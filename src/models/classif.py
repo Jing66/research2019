@@ -36,12 +36,12 @@ class Classifier(nn.Module):
         self._drop = nn.Dropout(self._hparams['dropout'])
         
         rnn_type = getattr(nn, self._hparams['Feature']['rnn_type'])
-        # self.rnn = rnn_type(hidden_sz,hidden_sz, num_layers=1, batch_first=True)
-        self.rnn = rnn_type(emb_sz, hidden_sz, num_layers=1, batch_first=True)
+        self.rnn = rnn_type(hidden_sz,hidden_sz, num_layers=1, batch_first=True)
+        # self.rnn = rnn_type(emb_sz, hidden_sz, num_layers=1, batch_first=True)
         self.linear_first = torch.nn.Linear(hidden_sz,dense_sz)
         self.linear_second = torch.nn.Linear(dense_sz,attn_heads)
         self.linear_final = nn.Linear(hidden_sz, self.n_class)      # binary classification
-       # weighted sum of graph output: [n_layers,]
+        # weighted sum of graph output: [n_layers,]
         n_layers = self._hparams['n_layers']
         self.mixture_wgt = nn.Parameter(data=torch.Tensor(n_layers), requires_grad=True)
         self.mixture_wgt.data.fill_(0.5)
@@ -81,14 +81,14 @@ class Classifier(nn.Module):
             - hidden_state: tuple of rnn hidden states
         '''
         b = x.shape[0]
-        hidden_state = _slice(hidden_state,b)
+        hidden_state = utils.slice_(hidden_state,b)
         max_len = x.shape[1]
         embedded = self.embedding(x)            # [b,T,embd_sz]
 
         pad_mask = utils.get_mask_3d(x)
-        # M = self.graph_feature(embedded, pad_mask)         # [b, T, T]
-        # next_in = self.fuse(embedded, M)                    # [b,T, hidden_sz]
-        next_in = embedded
+        M = self.graph_feature(embedded, pad_mask)         # [b, T, T]
+        next_in = self.fuse(embedded, M)                    # [b,T, hidden_sz]
+        # next_in = embedded
         outputs, hn  = self.rnn(next_in, hidden_state) 
         x = torch.tanh(self.linear_first(outputs))
         x = self.linear_second(x)                           # [b, T, #head] 
@@ -117,10 +117,3 @@ class Classifier(nn.Module):
         return torch.sum(torch.sum(torch.sum(m**2,1),1)**0.5)
 
 
-def _slice(x, idx):
-    if x is None:
-        return None
-    elif type(x)==tuple:
-        return _slice(x[0],idx), _slice(x[1], idx)
-    else:
-        return x[:,:idx,:]

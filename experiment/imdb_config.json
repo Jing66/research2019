@@ -1,0 +1,26 @@
+{
+    "Trainer": {
+        "save_period": 7,
+        "epoch": 15,
+        "lr": 0.0001,
+        "train_batch_sz": 50,
+        "eval_batch_sz": 50,
+        "optimizer": "Adam",
+        "total_samples":2500000,
+        "penalty": 0.05,
+        "n_workers": 6
+    },
+    "Model":{
+        "pretrained_embeddings": true,
+        "max_len": 500, 
+        "embd_sz": 300,
+        "dropout": 0.4, 
+        "Feature":{
+            "attn_heads":10,
+            "dense_sz": 80,
+            "hidden_sz": 50 ,
+            "rnn_type": "LSTM"
+        }
+     }
+ }
+

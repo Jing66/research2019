@@ -67,17 +67,18 @@ class IMDBData(Dataset):
                 w_freq.append(freq)   
         self.w_freq = np.array(w_freq)
 
-        def _append_to_self(tuples, to_append):
-            sent, label = tuples
+        def _append_to_self(idx, to_append, from_data):
+            sent, label = from_data[idx]
             sent_idx = [START] 
             for w in word_tokenize(sent):
                 sent_idx.append(self._vocab.get(w,UNK))
             sent_idx.append(EOS)
             to_append.append((sent_idx, label))
 
-        _ = [_append_to_self(t, self._train) for t in trains[:train_len]]
-        _ = [_append_to_self(t, self._dev) for t in trains[train_len:]]
-        _ = [_append_to_self(t, self._test) for t in tests]
+        permuted_idx = np.random.permutation(len(trains))
+        _ = [_append_to_self(t, self._train,trains) for t in permuted_idx[:train_len]]
+        _ = [_append_to_self(t, self._dev,trains) for t in permuted_idx[train_len:]]
+        _ = [_append_to_self(t, self._test,tests) for t in np.arange(len(tests))]
 
 
         
@@ -109,7 +110,6 @@ class IMDBData(Dataset):
         w_freq = np.load('%s/w_freq.npy'%d)
 
         ds = IMDBData(train,dev,test, vocab, w_freq)
-        ds.load_embedding(d)
         return ds
 
     
@@ -132,9 +132,10 @@ def make_embedding(vocab, d):
     dim = vectors['hi'].shape[0]
     embeddings = []
     for word,_ in vocab.items():
-        if word in {'UNK','START','EOS'}:
-            vec = np.random.randn(dim)
-        vec = vectors[word]
+        if word=="PAD":
+            vec = torch.zeros(dim).float()
+        else:
+            vec = vectors[word]
         embeddings.append(vec)
     embd = torch.stack(embeddings)
     torch.save(embd, '%s/embd.pt'%d)

@@ -89,6 +89,7 @@ def default_hparams(model='glomo'):
                     "n_workers": 6
                 },
                 "Model":{
+                    "pretrained_embeddings": true,
                     "max_len": 60, 
                     "embd_sz": 400,
                     "n_layers": 2,
@@ -141,6 +142,14 @@ def get_subseq_mask(x):
     subsequent_mask = torch.triu( torch.ones((T, T), device=x.device, dtype=torch.uint8), diagonal=1)
     subsequent_mask = subsequent_mask.unsqueeze(0).expand(b, -1, -1)  # b x ls x ls
     return subsequent_mask
+
+def slice_(x, idx):
+    if x is None:
+        return None
+    elif type(x)==tuple:
+        return slice_(x[0],idx), slice_(x[1], idx)
+    else:
+        return x[:,:idx,:]
 
 
 def memReport():

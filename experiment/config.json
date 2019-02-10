@@ -1,0 +1,29 @@
+{
+    "Trainer": {
+        "epoch": 10,
+        "lr": 0.001,
+        "total_samples":500000,
+        "optimizer": "Adam",
+        "vocab_clusters":4,
+        "train_batch_sz":100,
+        "eval_batch_sz":20
+    },
+    "Model": {
+        "max_len": 80,
+        "n_layers": 3,
+        "embd_sz": 300,
+        "dropout": 0.5,
+        "Graph": {
+            "sparsity_fn": "leaky_relu",
+            "kernel_sz": 5,
+            "linear_feat": 100,
+            "n_filter_k": 10,
+            "n_filter_q": 10
+        },
+        "Feature": {
+            "context_sz": 7,
+            "compose_fn": "GRUCell",
+            "SS_prob":0.0
+        }
+    }
+}    

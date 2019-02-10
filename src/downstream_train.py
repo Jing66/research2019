@@ -45,6 +45,8 @@ class ClassifierTrainer(Trainer):
         self.logger.info("Building trainer class %s" %self.__class__.__name__)
         self.logger.info("Loading data from [%s]..." %(datadir))
         self.dataset = IMDBData.load_ds(datadir, test_only)
+        if self.config["Model"]["pretrained_embeddings"]:
+            self.dataset.load_embedding(datadir)
         self.logger.info(str(self.dataset))
 
         # build model, loss, optimizer
@@ -62,7 +64,8 @@ class ClassifierTrainer(Trainer):
             raise Exception("Must provide a trained graph for downstreaming task")
         if self.graph_ckpt is not None:  
             graph_hparams = json.load(open('%s/config.json'%self.graph_ckpt,'r'))
-            self.config['Model']= utils.update_dict(self.config['Model'],graph_hparams['Model'])
+            self.config['Model']["Graph"]= utils.update_dict(self.config['Model'].get('Graph',{}),graph_hparams['Model']['Graph'])
+            self.config['Model']["n_layers"] = graph_hparams["Model"]['n_layers']
         self.logger.info("Complete hparams with graph:\n%s"%(json.dumps(self.config['Model'],indent=4)))
         self._graph = Graph(self.config['Model'], self.logger)
         if self.graph_ckpt is not None:

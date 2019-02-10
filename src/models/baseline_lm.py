@@ -3,6 +3,7 @@ import torch.nn as nn
 from torch.autograd import Variable
 import math
 import pdb
+from util import utils
 
 PAD = 0
 
@@ -45,11 +46,8 @@ class BaseLM(nn.Module):
         is_cuda = x.is_cuda
         T = x.shape[-1]             # max length
         b = x.shape[0]
-        if hidden is not None:
-            hidden = hidden[:,:b,:].contiguous()
+        hidden = utils.slice_(hidden, b)
         inputs = self._drop(self._embedding(x))
-        if hidden is not None:
-            hidden = hidden[:,:b,:].contiguous()
         packed_input = nn.utils.rnn.pack_padded_sequence(inputs, lengths-1,batch_first=True)
         packed_output, hn = self._rnn(packed_input,hidden)      
         output, _ = nn.utils.rnn.pad_packed_sequence(packed_output)     # [b,T,hidden]
