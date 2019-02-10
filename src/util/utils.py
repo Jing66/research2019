@@ -149,7 +149,7 @@ def slice_(x, idx):
     elif type(x)==tuple:
         return slice_(x[0],idx), slice_(x[1], idx)
     else:
-        return x[:,:idx,:]
+        return x[:,:idx,:].contiguous()
 
 
 def memReport():
