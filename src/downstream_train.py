@@ -1,9 +1,9 @@
 import json
 import sys
-import math
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from torch.autograd import Variable
 import numpy as np
 import os
 import argparse
@@ -34,6 +34,12 @@ class ClassifierTrainer(Trainer):
         n_total = ytrue.shape[0]
         return float(n_correct)/n_total
         
+    def l2_penalty(self, x):
+        xT = torch.transpose(x,1,2)
+        identity = torch.eye(x.size(1),device=x.device)
+        identity = Variable(identity.unsqueeze(0).expand(x.shape[0],x.size(1),x.size(1)))
+        penal = self._model.l2_matrix_norm(x@xT - identity)
+        return penal
 
     def build(self, datadir, test_only=False):
         self.logger.info("Building trainer class %s" %self.__class__.__name__)
@@ -57,7 +63,7 @@ class ClassifierTrainer(Trainer):
         if self.graph_ckpt is not None:  
             graph_hparams = json.load(open('%s/config.json'%self.graph_ckpt,'r'))
             self.config['Model']= utils.update_dict(self.config['Model'],graph_hparams['Model'])
-        logger.info("Complete hparams with graph:\n%s"%(json.dumps(self.config['Model'],indent=4)))
+        self.logger.info("Complete hparams with graph:\n%s"%(json.dumps(self.config['Model'],indent=4)))
         self._graph = Graph(self.config['Model'], self.logger)
         if self.graph_ckpt is not None:
             logger.info("Loading graph from checkpoint %s"%self.graph_ckpt)
@@ -68,8 +74,8 @@ class ClassifierTrainer(Trainer):
             try:
                 self._graph.load_state_dict(checkpoint['graph'])
             except Exception as e:
-                logger.error(e)
-                logger.error("Failed to load graph")
+                self.logger.error(e)
+                self.logger.error("Failed to load graph")
         # build classifier model
         self._model = Classifier(self.dataset.vocab_sz, self.config['Model'],
                 self.dataset.n_class, self._graph, self.logger, self.dataset.embd)
@@ -89,8 +95,10 @@ class ClassifierTrainer(Trainer):
             X = X.cuda()
             lens = lens.cuda()
             ytrue = ytrue.cuda()
-        logits, hidden = self._model(X, lens, kwargs['hidden'])
-        loss = self.criterion(logits, ytrue)
+        logits, hidden, attention  = self._model(X, lens, kwargs['hidden'])
+        penal = self.l2_penalty(attention)
+        C = self.config["Trainer"]["penalty"]
+        loss = self.criterion(logits, ytrue) + C* penal/X.shape[0]
         acc = self.accuracy_fn(logits,ytrue)
         hn = Classifier.repackage(hidden)
         return loss, acc, {"hidden":hn}

@@ -49,6 +49,10 @@ if __name__=="__main__":
         trainer = Trainer(hparams,utils.format_dirname(args.data_dir), utils.format_dirname(args.ckpt_dir), logger,args.device, test_only=True)
     elif args.model.lower()=='baselinelm':
         trainer = BaseLMTrainer( hparams, utils.format_dirname(args.data_dir),  utils.format_dirname(args.ckpt_dir),logger,args.device, test_only=True)
+    elif args.model.lower()=='imdb':
+        graph_ckpt=None
+        trainer = ClassifierTrainer(hparams,  utils.format_dirname(args.data_dir), 
+            utils.format_dirname(args.ckpt_dir), graph_ckpt, logger, args.device, test_only=True)    
     else:
         raise ValueError('Model type %s unsupported'%args.model)
 

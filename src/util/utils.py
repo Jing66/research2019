@@ -79,12 +79,13 @@ def default_hparams(model='glomo'):
             {
                 "Trainer": {
                     "save_period": 7,
-                    "epoch": 30,
+                    "epoch": 15,
                     "lr": 0.0001,
                     "train_batch_sz": 50,
                     "eval_batch_sz": 10,
                     "optimizer": "Adam",
-                    "total_samples":500000,
+                    "penalty": 0.03,
+                    "total_samples":250000,
                     "n_workers": 6
                 },
                 "Model":{
@@ -96,7 +97,7 @@ def default_hparams(model='glomo'):
                         "attn_heads":1,
                         "dense_sz": 600,
                         "hidden_sz": 500 ,
-                        "rnn_type": "GRU"
+                        "rnn_type": "LSTM"
                     }
              }
          }
@@ -167,6 +168,7 @@ def update_dict(default, dict2):
         else:
             default[k] = v
     return default
+
 
 
 def plot_train_dev_metrics(train_losses, dev_losses, metric_name,  fname=None):

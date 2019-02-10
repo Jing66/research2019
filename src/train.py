@@ -167,7 +167,7 @@ class Trainer(object):
     
         if  math.isnan(loss_per_epoch):
             self.logger.error("Get NaN loss for epoch %d-- exiting" %epoch)
-            Sys.exit(1)
+            sys.exit(1)
 
         return loss_per_epoch, acc_per_epoch
 
