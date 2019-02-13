@@ -314,6 +314,8 @@ if __name__=="__main__":
 
     args = parser.parse_args()
     # setup logger, seed, gpu etc
+    if args.no_train or args.visualize:
+        args.log_fname+="_visualize"
     logger = get_logger(args.log_fname, args.debug, args.save_dir)
     logger.info("Command line args: $"+(" ").join(sys.argv))
     logger.info("Setting pytorch/numpy random seed to %s"%args.seed)

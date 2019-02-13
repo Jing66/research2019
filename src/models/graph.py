@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+import torchsparseattn
 from util import utils
 import pdb
 EPSILON = 1e-9
@@ -60,6 +61,7 @@ class Graph(nn.Module):
             G_l_unnorm = kl@torch.transpose(ql,1,2)+bias
             mask = pad_mask & subseq_mask
             # this computes: G_l[b,i,j] = [fn(dot(kl[b,i,:],ql[b,j,:]+b)]^2
+            # torch.sum(G_l, dim=1) should ==1
             if sparse_fn == 'leaky_relu':
                 G_l_unnorm = (F.leaky_relu(G_l_unnorm))**2       # (b,T,T)
                 G_l_unnorm.masked_fill_(mask==0,0.0)
@@ -75,6 +77,14 @@ class Graph(nn.Module):
             elif sparse_fn == 'softmax':
                 G_l_unnorm.masked_fill_(mask==0,SOFTMAX_MASK)
                 G_l = F.softmax(G_l_unnorm, dim=1)
+            elif sparse_fn == 'sparsemax':
+                sparse_fn = torchsparseattn.SparsemaxFunction()
+                G_l_unnorm.masked_fill_(mask==0,0.0)
+                T = G_l_unnorm.shape[1]
+                xflat = torch.transpose(G_l_unnorm,1,2).contiguous().view(-1,T)  # (b*T,T)
+                # lengths = torch.sum(pad_mask.contiguous().view(-1,T),dim=1).detach()
+                y = sparse_fn(xflat).view(-1,T,T).contiguous()
+                G_l = torch.transpose(y,1,2)
             G_.append(G_l)
         G = torch.stack(G_, dim=1) # (b,L,T,T)
         return G

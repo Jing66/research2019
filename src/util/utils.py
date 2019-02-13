@@ -90,14 +90,16 @@ def default_hparams(model='glomo'):
                 },
                 "Model":{
                     "pretrained_embeddings": true,
-                    "max_len": 60, 
-                    "embd_sz": 400,
+                    "max_len": 500, 
+                    "embd_sz": 300,
                     "n_layers": 2,
                     "dropout": 0.0, 
                     "Feature":{
-                        "attn_heads":1,
-                        "dense_sz": 600,
-                        "hidden_sz": 500 ,
+                        "attn_heads":10,
+                        "dense_sz": 100,
+                        "hidden_sz": 50 ,
+                        "fuse_embd": true,
+                        "fuse_rnn": true,
                         "rnn_type": "LSTM"
                     }
              }
