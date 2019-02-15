@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchsparseattn
+from models import layers
 from util import utils
 import pdb
 EPSILON = 1e-9
@@ -78,13 +79,16 @@ class Graph(nn.Module):
                 G_l_unnorm.masked_fill_(mask==0,SOFTMAX_MASK)
                 G_l = F.softmax(G_l_unnorm, dim=1)
             elif sparse_fn == 'sparsemax':
-                sparse_fn = torchsparseattn.SparsemaxFunction()
+                if not hasattr(self, "sparse_fn"):
+                    self.sparse_fn = layers.Sparsemax(dim=1)
+                # sparse_fn = torchsparseattn.SparsemaxFunction()
                 G_l_unnorm.masked_fill_(mask==0,0.0)
-                T = G_l_unnorm.shape[1]
-                xflat = torch.transpose(G_l_unnorm,1,2).contiguous().view(-1,T)  # (b*T,T)
+                # T = G_l_unnorm.shape[1]
+                # xflat = torch.transpose(G_l_unnorm,1,2).contiguous().view(-1,T)  # (b*T,T)
                 # lengths = torch.sum(pad_mask.contiguous().view(-1,T),dim=1).detach()
-                y = sparse_fn(xflat).view(-1,T,T).contiguous()
-                G_l = torch.transpose(y,1,2)
+                # y = sparse_fn(xflat).view(-1,T,T).contiguous()
+                # G_l = torch.transpose(y,1,2)
+                G_l = self.sparse_fn(G_l_unnorm)
             G_.append(G_l)
         G = torch.stack(G_, dim=1) # (b,L,T,T)
         return G

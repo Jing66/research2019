@@ -15,7 +15,7 @@
         "embd_sz": 300,
         "dropout": 0.0,
         "Graph": {
-            "sparsity_fn": "leaky_relu",
+            "sparsity_fn": "sparsemax",
             "kernel_sz": 5,
             "linear_feat": 50,
             "n_filter_k": 7,
