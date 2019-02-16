@@ -1,74 +1,81 @@
 import torch
 import torch.nn as nn
+from torch.autograd import Function
 
-# taken from https://github.com/KrisKorrel/sparsemax-pytorch/blob/master/sparsemax.py
-class Sparsemax(nn.Module):
-    """Sparsemax function."""
+def _make_ix_like(input, dim=0):
+    d = input.size(dim)
+    rho = torch.arange(1, d + 1, device=input.device, dtype=input.dtype)
+    view = [1] * input.dim()
+    view[0] = -1
+    return rho.view(view).transpose(0, dim)
 
-    def __init__(self, dim=None):
-        """Initialize sparsemax activation
-        
-        Args:
-            dim (int, optional): The dimension over which to apply the sparsemax function.
+
+def _threshold_and_support(input, dim=0):
+    """
+    Sparsemax building block: compute the threshold
+    Parameters:
+        input: any dimension
+        dim: dimension along which to apply the sparsemax
+    Returns:
+        the threshold value
+    """
+    input_srt, _ = torch.sort(input, descending=True, dim=dim)
+    input_cumsum = input_srt.cumsum(dim) - 1
+    rhos = _make_ix_like(input, dim)
+    support = rhos * input_srt > input_cumsum
+
+    support_size = support.sum(dim=dim).unsqueeze(dim)
+    tau = input_cumsum.gather(dim, support_size - 1)
+    tau /= support_size.to(input.dtype)
+    return tau, support_size
+
+
+class SparsemaxFunction(Function):
+
+    @staticmethod
+    def forward(ctx, input, dim=0):
         """
-        super(Sparsemax, self).__init__()
-
-        self.dim = -1 if dim is None else dim
-
-    def forward(self, inputs):
-        """Forward function.
-        Args:
-            input (torch.Tensor): Input tensor. First dimension should be the batch size
+        sparsemax: normalizing sparse transform (a la softmax)
+        Parameters:
+            input (Tensor): any shape
+            dim: dimension along which to apply sparsemax
         Returns:
-            torch.Tensor: [batch_size x number_of_logits] Output tensor
+            output (Tensor): same shape as input
         """
-        # Sparsemax currently only handles 2-dim tensors,
-        # so we reshape and reshape back after sparsemax
-        original_size = inputs.size()
-        inputs = inputs.view(-1, inputs.size(self.dim))
-        
-        dim = 1
-        number_of_logits = inputs.size(dim)
-
-        # Translate input by max for numerical stability
-        inputs = inputs - torch.max(inputs, dim=dim, keepdim=True)[0].expand_as(inputs)
-
-        # Sort input in descending order.
-        # (NOTE: Can be replaced with linear time selection method described here:
-        # http://stanford.edu/~jduchi/projects/DuchiShSiCh08.html)
-        zs = torch.sort(input=inputs, dim=dim, descending=True)[0]
-        ranges = torch.arange(start=1, end=number_of_logits+1,dtype=zs.dtype, device=inputs.device).view(1, -1)
-        ranges = ranges.expand_as(zs)
-
-        # Determine sparsity of projection
-        bound = 1 + ranges * zs
-        cumulative_sum_zs = torch.cumsum(zs, dim)
-        is_gt = torch.gt(bound, cumulative_sum_zs).type(inputs.type())
-        k = torch.max(is_gt * ranges, dim, keepdim=True)[0]
-
-        # Compute threshold function
-        zs_sparse = is_gt * zs
-
-        # Compute taus
-        taus = (torch.sum(zs_sparse, dim, keepdim=True) - 1) / k
-        taus = taus.expand_as(inputs)
-
-        # Sparsemax
-        self.output = torch.max(torch.zeros_like(inputs), inputs - taus)
-
-        output = self.output.view(original_size)
-
+        ctx.dim = dim
+        max_val, _ = input.max(dim=dim, keepdim=True)
+        input -= max_val  # same numerical stability trick as for softmax
+        tau, supp_size = _threshold_and_support(input, dim=dim)
+        output = torch.clamp(input - tau, min=0)
+        ctx.save_for_backward(supp_size, output)
         return output
 
-    def backward(self, grad_output):
-        """Backward function."""
-        dim = 1
+    @staticmethod
+    def backward(ctx, grad_output):
+        supp_size, output = ctx.saved_tensors
+        dim = ctx.dim
+        grad_input = grad_output.clone()
+        grad_input[output == 0] = 0
 
-        nonzeros = torch.ne(self.output, 0)
-        sum = torch.sum(grad_output * nonzeros, dim=dim) / torch.sum(nonzeros, dim=dim)
-        self.grad_input = nonzeros * (grad_output - sum.expand_as(grad_output))
+        v_hat = grad_input.sum(dim=dim) / supp_size.to(output.dtype).squeeze()
+        v_hat = v_hat.unsqueeze(dim)
+        grad_input = torch.where(output != 0, grad_input - v_hat, grad_input)
+        return grad_input, None
 
-        return self.grad_input
+
+sparsemax = SparsemaxFunction.apply
+
+
+class Sparsemax(nn.Module):
+
+    def __init__(self, dim=0):
+        self.dim = dim
+        super(Sparsemax, self).__init__()
+
+    def forward(self, input):
+        return sparsemax(input, self.dim)
+
+
 
 class ResLinear(nn.Module):
     '''implement linear layer with residual connection'''
