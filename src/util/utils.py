@@ -126,8 +126,10 @@ def get_free_gpu():
 def get_mask_2d(sequences_lengths):
     batch_size = sequences_lengths.size()[0]
     max_length = torch.max(sequences_lengths)
-    mask = torch.zeros(batch_size, max_length, dtype=torch.uint8)
-    mask[torch.arange(batch_size), :max_length] = 1
+    mask = torch.zeros(batch_size, max_length+1,device=sequences_lengths.device,  dtype=torch.uint8)
+    mask[torch.arange(batch_size), sequences_lengths] = 1
+    mask = torch.cumsum(mask, dim=1)
+    mask = (1-mask)[:,:-1]
     return torch.autograd.Variable(mask.detach())
 
 def get_mask_3d(seq_batch, mask_idx=0):

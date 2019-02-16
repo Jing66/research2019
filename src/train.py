@@ -297,12 +297,12 @@ if __name__=="__main__":
     parser.add_argument('model', default="GLoMo", help="which model to train")
     parser.add_argument('data_dir', help='path to data folder')
     parser.add_argument('-c','--config', default=None,
-                        help='path to config file, default ./experiment/toy_config.json')
+                        help='path to config file')
     parser.add_argument('-r', '--resume', default=None, type=str, 
                         help='path to last checkpoint model')
     parser.add_argument('-l', '--log_fname', default='train', 
                         help='generate logs in fname.log')
-    parser.add_argument('-s', '--save_dir', default='experiment/test', 
+    parser.add_argument('-s', '--save_dir', default='test', 
                         help='path to save trained model')
     parser.add_argument('-v','--visualize',nargs='+', default=None, 
                         help='indices for selecting visualizations')
