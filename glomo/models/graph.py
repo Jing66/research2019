@@ -22,7 +22,6 @@ class Graph(nn.Module):
             # key and query CNN
             kernel_sz = self._hparams['Graph']['kernel_sz'] # must be odd
             padding = int(0.5*kernel_sz) # s.t. conv output has dim T
-            self.logger.debug('kernel_size=%d, padding=%d'%(kernel_sz, padding))
             nb_filter_k = self._hparams['Graph']['n_filter_k']
             nb_filter_q = self._hparams['Graph']['n_filter_q']
             nb_lin_feat = self._hparams['Graph']['linear_feat']
