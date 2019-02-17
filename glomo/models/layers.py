@@ -2,6 +2,12 @@ import torch
 import torch.nn as nn
 from torch.autograd import Function
 
+import pdb
+
+import sys
+sys.path.append('/home/ml/jliu164/GLoMo/glomo')
+from util import utils
+
 def _make_ix_like(input, dim=0):
     d = input.size(dim)
     rho = torch.arange(1, d + 1, device=input.device, dtype=input.dtype)
@@ -10,7 +16,7 @@ def _make_ix_like(input, dim=0):
     return rho.view(view).transpose(0, dim)
 
 
-def _threshold_and_support(input, dim=0):
+def _threshold_and_support(input, dim=0, mask=None):
     """
     Sparsemax building block: compute the threshold
     Parameters:
@@ -19,6 +25,8 @@ def _threshold_and_support(input, dim=0):
     Returns:
         the threshold value
     """
+    if mask is not None:
+        input.masked_fill_(mask==0,-1e9)
     input_srt, _ = torch.sort(input, descending=True, dim=dim)
     input_cumsum = input_srt.cumsum(dim) - 1
     rhos = _make_ix_like(input, dim)
@@ -33,7 +41,7 @@ def _threshold_and_support(input, dim=0):
 class SparsemaxFunction(Function):
 
     @staticmethod
-    def forward(ctx, input, dim=0):
+    def forward(ctx, input, dim=0,mask=None):
         """
         sparsemax: normalizing sparse transform (a la softmax)
         Parameters:
@@ -45,7 +53,7 @@ class SparsemaxFunction(Function):
         ctx.dim = dim
         max_val, _ = input.max(dim=dim, keepdim=True)
         input -= max_val  # same numerical stability trick as for softmax
-        tau, supp_size = _threshold_and_support(input, dim=dim)
+        tau, supp_size = _threshold_and_support(input, dim=dim, mask=mask)
         output = torch.clamp(input - tau, min=0)
         ctx.save_for_backward(supp_size, output)
         return output
@@ -60,7 +68,7 @@ class SparsemaxFunction(Function):
         v_hat = grad_input.sum(dim=dim) / supp_size.to(output.dtype).squeeze()
         v_hat = v_hat.unsqueeze(dim)
         grad_input = torch.where(output != 0, grad_input - v_hat, grad_input)
-        return grad_input, None
+        return grad_input, None, None
 
 
 sparsemax = SparsemaxFunction.apply
@@ -72,8 +80,8 @@ class Sparsemax(nn.Module):
         self.dim = dim
         super(Sparsemax, self).__init__()
 
-    def forward(self, input):
-        return sparsemax(input, self.dim)
+    def forward(self, input,mask=None):
+        return sparsemax(input, self.dim,mask)
 
 
 
@@ -95,3 +103,23 @@ class ResLinear(nn.Module):
         xhat = self.linear(wgt_inputs)
         out = xhat + inputs
         return out
+
+
+
+def test_sparsemax():
+    fn = Sparsemax(dim=1)
+    fn2 = Sparsemax(dim=0)
+    torch.manual_seed(2)
+    inputs = torch.randn(3,5,5)
+    pad_mask = torch.tensor([[[1,1,1,1,1],[1,1,1,1,1],[1,1,1,1,1],[1,1,1,1,1],[1,1,1,1,1]],
+                            [[1,1,1,1,0],[1,1,1,1,0],[1,1,1,1,0],[1,1,1,1,0],[0,0,0,0,0]],
+                           [[1,1,0,0,0],[1,1,0,0,0],[0,0,0,0,0],[0,0,0,0,0],[0,0,0,0,0]]], dtype=torch.uint8)
+    subseq_mask =torch.triu(torch.ones((5,5), dtype=torch.uint8), diagonal=1).unsqueeze(0).expand(3, -1, -1)
+    mask = subseq_mask & pad_mask
+    inputs.masked_fill_(mask==0,0.0)
+    output = fn(inputs,subseq_mask)
+    print("output",output) 
+
+# test sparsemax
+if __name__=="__main__":
+    test_sparsemax()
