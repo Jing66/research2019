@@ -62,18 +62,16 @@ class Graph(nn.Module):
             mask = pad_mask & subseq_mask
             # this computes: G_l[b,i,j] = [fn(dot(kl[b,i,:],ql[b,j,:]+b)]^2
             # torch.sum(G_l, dim=1) should ==1
-            if sparse_fn == 'leaky_relu':
-                G_l_unnorm = (F.leaky_relu(G_l_unnorm))**2       # (b,T,T)
+            if sparse_fn == 'leaky_relu' or sparse_fn == 'relu':
+                sparse_fn = getattr(F, sparse_fn)
+                G_l_unnorm = (sparse_fn(G_l_unnorm))**2       # (b,T,T)
                 G_l_unnorm.masked_fill_(mask==0,0.0)
-                G_l_unnorm += EPSILON
+                # deal with extra sentence padding, add epsilon so that G doesn't divide by 0
+                _tmp = torch.unsqueeze(pad_mask[:,:,0],1).expand(pad_mask.size())
+                G_l_unnorm.masked_fill_(_tmp==0, EPSILON)
                 Z = torch.sum(G_l_unnorm, dim=1, keepdim=True)                  #(b,T,T)
-                G_l = G_l_unnorm/Z                  # Z might be zero since RELU sets  all neg. values to 0
-            elif sparse_fn == "relu":
-                G_l_unnorm = (F.relu(G_l_unnorm))**2
-                G_l_unnorm.masked_fill_(mask==0,0.0)
-                G_l_unnorm += EPSILON
-                Z = torch.sum(G_l_unnorm, dim=1, keepdim=True)
-                G_l = G_l_unnorm/Z
+                G_l = G_l_unnorm/Z  
+                G_l.masked_fill_(mask==0, 0.0)          # mask back the sentence padding
             elif sparse_fn == 'softmax':
                 G_l_unnorm.masked_fill_(mask==0,SOFTMAX_MASK)
                 G_l = F.softmax(G_l_unnorm, dim=1)

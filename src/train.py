@@ -176,12 +176,15 @@ class Trainer(object):
     def train(self, savedir):
         # training steps
         start_epoch, best_loss = self.load_ckpt()
+        patience_counter = 0
+        patience = self.config['Trainer'].get('early_stop_patience',6)
         save_period = self.config['Trainer']['save_period']
         train_losses, dev_losses, train_accs, dev_accs  = [], [], [], []
         self.logger.info('Start training with best_loss %6.4f, \nhparams:\n %s'%(best_loss, json.dumps(self.config['Trainer'], indent=4)))
         for epoch in range(start_epoch, start_epoch + self.config['Trainer']['epoch']):
             # train one epoch, forward and backward on whole dataset
             epoch_start = time.time()
+            patience_counter += 1
             loss_per_epoch, accuracies_per_epoch  = self.run_one_epoch(epoch)
             epoch_time = time.time() - epoch_start
             self.logger.info('epoch %d done, training time=[%s], training loss=%6.4f, training accuracy = %6.3f'%(epoch, str(timedelta(seconds=epoch_time)) , loss_per_epoch, accuracies_per_epoch))
@@ -202,10 +205,14 @@ class Trainer(object):
 
             # save best model on dev set
             if loss_per_validate < best_loss:
+                patience_counter = 0
                 best_loss = loss_per_validate
                 self.save('%s/best'%savedir, best_loss, epoch)
                 self.logger.info('>>New best validation loss: %s. Model saved into %s/best/'%(best_loss, savedir))
                 
+            if patience_counter >= patience:
+                self.logger.info("=> Early Stopping! Patience limit=%d reached" %patience)
+                break
             
         # Done -- plot graphs
         utils.plot_train_dev_metrics(train_losses, dev_losses,"loss", savedir+'/losses')
@@ -215,7 +222,6 @@ class Trainer(object):
 
 
     def validate(self,  ds_name='dev'):
-        self.logger.info("Setting model to eval mode. Start evaluating on %s set..." %ds_name)
         self._model.eval()
         losses, accuracies = 0, 0
         data_iter_eval = get_data_loader(self.dataset, ds_name, self.config['Trainer']['eval_batch_sz'],
@@ -315,7 +321,7 @@ if __name__=="__main__":
     args = parser.parse_args()
     # setup logger, seed, gpu etc
     if args.no_train or args.visualize:
-        args.log_fname+="_visualize"
+        args.log_fname = "visualize"
     logger = get_logger(args.log_fname, args.debug, args.save_dir)
     logger.info("Command line args: $"+(" ").join(sys.argv))
     logger.info("Setting pytorch/numpy random seed to %s"%args.seed)
