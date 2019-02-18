@@ -77,14 +77,16 @@ class Graph(nn.Module):
             elif sparse_fn == 'softmax':
                 G_l_unnorm.masked_fill_(mask==0,SOFTMAX_MASK)
                 G_l = F.softmax(G_l_unnorm, dim=1)
+                G_l.masked_fill_(pad_mask==0,0.0)
             elif sparse_fn == 'sparsemax':
-                # pdb.set_trace()
                 if not hasattr(self, "sparse_fn"):
                     self.sparse_fn = layers.Sparsemax(dim=1)
                 G_l_unnorm.masked_fill_(mask==0,0.0)
                 
                 G_l = self.sparse_fn(G_l_unnorm[:,:,1:], subseq_mask[:,:,1:])
-                G_l = torch.cat((torch.zeros(b,T,1, device=x.device), G_l),dim=2)
+                _tmp = torch.zeros(b,T, device=x.device, dtype=G_l.dtype)
+                _tmp += 1/torch.sum(pad_mask[:,:,0], dim=1, keepdim=True).float()
+                G_l = torch.cat((torch.unsqueeze(_tmp,-1),G_l),dim=2)
                 G_l.masked_fill_(pad_mask==0, 0.0)
             G_.append(G_l)
         G = torch.stack(G_, dim=1) # (b,L,T,T)
