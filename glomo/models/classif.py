@@ -37,27 +37,41 @@ class Classifier(nn.Module):
         self._drop = nn.Dropout(self._hparams['dropout'])
         
         rnn_type = getattr(nn, self._hparams['Feature']['rnn_type'])
-        self.rnn = rnn_type(hidden_sz,hidden_sz, num_layers=1, batch_first=True)
-        # self.rnn = rnn_type(emb_sz, hidden_sz, num_layers=1, batch_first=True)
-        self.linear_first = torch.nn.Linear(hidden_sz,dense_sz)
+        if self._hparams['Feature']['fuse_embd']:
+            self.rnn = rnn_type(2*emb_sz,hidden_sz, num_layers=1, batch_first=True)
+        else:
+            self.rnn = rnn_type(emb_sz, hidden_sz, num_layers=1, batch_first=True)
         self.linear_second = torch.nn.Linear(dense_sz,attn_heads)
-        self.linear_final = nn.Linear(hidden_sz, self.n_class)      # binary classification
-        # weighted sum of graph output: [n_layers,]
+        if self._hparams['Feature']['fuse_rnn']:
+            self.linear_first = torch.nn.Linear(2*hidden_sz,dense_sz)
+            self.linear_final = nn.Linear(2*hidden_sz, self.n_class)      # binary classification
+        else:
+            self.linear_first = torch.nn.Linear(hidden_sz,dense_sz)
+            self.linear_final = nn.Linear(hidden_sz, self.n_class)
+
+        # Params for transfer learning
         n_layers = self._hparams['n_layers']
-        self.mixture_wgt = nn.Parameter(data=torch.Tensor(n_layers), requires_grad=True)
-        self.mixture_wgt.data.fill_(0.5)
+        self.mixture_wgt = nn.Parameter(data=torch.ones(n_layers*2), requires_grad=True)
         self.linear_cat1 = nn.Linear(emb_sz*2, hidden_sz,bias=False)
         self.linear_cat2 = nn.Linear(emb_sz*2, hidden_sz,bias=False)
 
 
 
-    def graph_feature(self,embeddings, mask):
-        G, G_prod = self.graph.prop_connection(embeddings, mask)
+    def graph_feature(self, x, mask):
+        '''
+        Args:
+            - x: [b, T, ndim]
+            - mask: [b,T,T]. mask[b,t,t]=1 if x[b,t,:] != 0
+        Returns: 
+            - M: [b,T,T] mixture of affinity matrix G
+        '''
+        G, G_prod = self.graph.prop_connection(x, mask)
         n_layers = G.shape[1]
-        m_g = self.mixture_wgt.view(1,n_layers,1,1)
-        m_lambda = (1 - self.mixture_wgt).view(1,n_layers,1,1)
-        M = m_g*G.detach() + m_lambda*G_prod.detach()           # [b,L,T,T]
-        return torch.sum(M, dim=1)
+        graph_wgt = F.softmax(self.mixture_wgt, dim=0)
+        graph_wgt = graph_wgt.view(2,1,n_layers,1,1)
+        M = torch.sum(graph_wgt[0]*G.detach(),dim=1) \
+                        + torch.sum(graph_wgt[1]*G_prod.detach(),dim=1)
+        return M
         
     
     def fuse(self, H, M):
@@ -70,7 +84,8 @@ class Classifier(nn.Module):
         cat_input = torch.cat((H, weighted_input),dim=2)        # [b,T, ndim*2]
         trans1 = self.linear_cat1(cat_input)
         trans2 = self.linear_cat2(cat_input)                    # [b, T, out_dim]
-        return trans1 * torch.sigmoid(trans2)
+        H_graph = trans1 * torch.sigmoid(trans2)
+        return torch.cat((H,H_graph),dim=2) 
 
     def forward(self, x, lengths, hidden_state):
         '''
@@ -81,7 +96,6 @@ class Classifier(nn.Module):
             - output: (b x n_class) unnormliazed logits
             - hidden_state: tuple of rnn hidden states
         '''
-        # pdb.set_trace()
         b = x.shape[0]
         hidden_state = utils.slice_(hidden_state,b)
         max_len = x.shape[1]
@@ -93,10 +107,14 @@ class Classifier(nn.Module):
         mask = utils.get_mask_2d(lengths)          # [b,T]
         mask_attn = torch.unsqueeze(mask,-1).expand(b, max_len, attn_heads)
 
-        M = self.graph_feature(embedded, pad_mask)         # [b, T, T]
-        next_in = self.fuse(embedded, M)                    # [b,T, hidden_sz]
-        # next_in = embedded
-        outputs, hn  = self.rnn(next_in, hidden_state) 
+        if self._hparams['Feature']['fuse_embd']:
+            M = self.graph_feature(embedded, pad_mask)         # [b, T, T]
+            embedded = self.fuse(embedded, M)                    # [b,T, hidden_sz]
+        outputs, hn  = self.rnn(embedded, hidden_state) 
+        if self._hparams['Feature']['fuse_rnn']:
+            M = self.graph_feature(outputs, pad_mask)
+            outputs = self.fuse(outputs, M)
+        # self attention
         x = torch.tanh(self.linear_first(outputs))
         x = self.linear_second(x)                           # [b, T, #head] 
         x = x.masked_fill_(mask_attn==0, SOFTMAX_MASK)
